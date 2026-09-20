@@ -61,3 +61,25 @@ jobs:
             build/sotto-server-${{ matrix.platform }}.tar.gz
             build/sotto-server-${{ matrix.platform }}.tar.gz.sha256
           if-no-files-found: error
+
+  cuda-package:
+    name: Package linux-x64-cuda
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+      - name: Build CUDA package
+        run: docker build -f Server/Dockerfile --target cuda-package --output type=local,dest=build .
+      - name: Package and checksum
+        run: |
+          cd build
+          tar -czf sotto-server-linux-x64-cuda.tar.gz server
+          shasum -a 256 sotto-server-linux-x64-cuda.tar.gz > sotto-server-linux-x64-cuda.tar.gz.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sotto-server-linux-x64-cuda
+          path: |
+            build/sotto-server-linux-x64-cuda.tar.gz
+            build/sotto-server-linux-x64-cuda.tar.gz.sha256
+          if-no-files-found: error

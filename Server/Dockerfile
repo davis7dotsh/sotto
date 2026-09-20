@@ -62,7 +62,13 @@ COPY --from=cuda-toolkit /usr/local/cuda-13.0/ /usr/local/cuda/
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64
 ENV NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
+# Tarball export. Helpers link cudart/cublas statically and load libcuda.so.1
+# from the host driver, so this stage copies none of the toolkit.
+FROM scratch AS cuda-package
+COPY --from=cuda-build /src/build/server /server
+
 # CPU is the default target, useful for a portable build/smoke check. Use the
-# cuda target for a GPU server and install NVIDIA Container Toolkit on its host.
+# cuda target when the host cannot place a matching CUDA runtime next to the
+# binary, and install NVIDIA Container Toolkit on that host.
 FROM runtime AS cpu
 COPY --from=cpu-build /src/build/server/ /opt/sotto/
