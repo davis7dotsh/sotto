@@ -2,7 +2,7 @@ import Foundation
 import IOKit.hid
 import IOKit.hidsystem
 
-/// The Mic Mini / Mini 2 USB receiver's consumer-control interface.
+/// The Mic Mini / Mini 2 / Mini 2S USB receiver's consumer-control interface.
 /// IDs and volume usages are documented by caezium/dji-mic-wispr-flow.
 enum DJIMicButton {
     static let vendorID = 0x2CA3

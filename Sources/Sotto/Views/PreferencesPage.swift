@@ -124,7 +124,7 @@ private struct DJIMicButtonPreferences: View {
         Section {
             Toggle("Use DJI mic button", isOn: $controller.djiMicButtonEnabled)
                 .accessibilityIdentifier("preferences.dji-mic-button")
-            Text("Press the transmitter’s linking button once to start, then again to stop and insert. Works with Mic Mini and Mini 2 receivers connected by USB-C.")
+            Text("Press the transmitter’s linking button once to start, then again to stop and insert. Works with Mic Mini, Mini 2, and Mini 2S receivers connected by USB-C.")
                 .font(.caption)
                 .foregroundStyle(SottoPalette.muted)
             if controller.djiMicButtonEnabled {
