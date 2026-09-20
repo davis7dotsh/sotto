@@ -9,7 +9,7 @@ final class ConfigurationFileTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: location.root) }
         let file = ConfigurationFile(url: location.url)
         let desk = AudioInputDevice(uid: "usb:desk", name: "Desk", transport: .usb)
-        let initial = SottoConfiguration(holdKey: "fn", launchAtLogin: true,
+        let initial = SottoConfiguration(holdKey: "fn", launchAtLogin: true, djiMicButtonEnabled: true,
             microphones: MicrophonePreferences(profiles: [MicrophoneProfile(id: "desk", name: "Desk", priority: [desk])],
                                                selection: .fixed(desk)))
         let created = try await file.load(orCreate: initial).get()
@@ -31,6 +31,7 @@ final class ConfigurationFileTests: XCTestCase {
             "[]", "null", #"{"holdKey":null}"#, #"{"holdKey":1}"#,
             #"{"schemaVersion":2}"#, #"{"schemaVersion":true}"#, #"{"holdKey":"function"}"#,
             #"{"launchAtLogin":"true"}"#, #"{"launchAtLogin":null}"#,
+            #"{"djiMicButtonEnabled":"true"}"#, #"{"djiMicButtonEnabled":null}"#,
         ] {
             XCTAssertThrowsError(try decoder.decode(SottoConfiguration.self, from: Data(json.utf8)), json)
         }
