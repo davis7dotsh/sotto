@@ -12,11 +12,12 @@ The server is an independent TypeScript/Fastify HTTP process that owns models, s
 The release workflow publishes `sotto-server-linux-x64-cuda.tar.gz` on `server-v*` tags and manual dispatch. Extract that tarball to `/opt/sotto`. The host NVIDIA driver must match CUDA 13.0.2: the helpers load `libcuda.so.1` from the driver, and the package does not include the CUDA toolkit. Keep model weights outside the package.
 
 ```sh
-sudo mkdir -p /opt/sotto /var/lib/sotto/models /etc/sotto
+sudo mkdir -p /opt/sotto /var/lib/sotto/models
+sudo install -d -m 700 /etc/sotto
 sudo tar -xzf sotto-server-linux-x64-cuda.tar.gz -C /opt/sotto --strip-components=1
 ```
 
-Place the pinned files at `/var/lib/sotto/models/ggml-large-v3-turbo.bin` and `/var/lib/sotto/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf`. Write a token of at least 32 characters, with no whitespace, to `/etc/sotto/token`. The package includes `sotto-server.service`. Install that unit once, outside the package:
+Place the pinned files at `/var/lib/sotto/models/ggml-large-v3-turbo.bin` and `/var/lib/sotto/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf`. Install a token of at least 32 characters, with no whitespace, at `/etc/sotto/token` with mode `0600`. The package includes `sotto-server.service`. Install that unit once, outside the package:
 
 ```sh
 sudo cp /opt/sotto/sotto-server.service /etc/systemd/system/sotto-server.service
