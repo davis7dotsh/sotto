@@ -31,7 +31,7 @@ Use your own model paths if they are already installed. The script builds the se
 
 ## DJI mic button
 
-Under **This Mac → DJI mic button**, enable **Use DJI mic button** and allow Input Monitoring when requested. Connect a DJI Mic Mini or Mini 2 receiver over USB-C. Press the transmitter's linking button once to start dictation, then again to stop and insert. Escape cancels. Sotto uses the input selected under **Microphone**; choose the DJI receiver there to record from it.
+Connect a DJI Mic Mini or Mini 2 receiver over USB-C. The **This Mac → DJI mic button** settings appear while a DJI microphone is in the available input list. Enable **Use DJI mic button** and allow Input Monitoring when requested. Press the transmitter's linking button once to start dictation, then again to stop and insert. Escape cancels. Sotto uses the input selected under **Microphone**; choose the DJI receiver there to record from it.
 
 The button uses the receiver's USB consumer-control interface (`2CA3:4011`), as documented by [dji-mic-wispr-flow](https://github.com/caezium/dji-mic-wispr-flow). Bluetooth-only connections do not send these events. Sotto handles the receiver directly without Karabiner; disable other DJI button mappings first. While enabled, Sotto captures the receiver's consumer controls so its button does not change system volume. Keyboard volume keys remain available. Disabling the feature or quitting releases the receiver.
 

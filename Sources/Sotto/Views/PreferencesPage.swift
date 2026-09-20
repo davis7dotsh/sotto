@@ -71,7 +71,12 @@ private struct DevicePreferencesForm: View {
             } header: { Text("This Mac").textCase(nil) }
             .disabled(controller.isBusy)
 
-            DJIMicButtonPreferences(controller: controller)
+            if controller.microphones.availableDevices.contains(where: {
+                $0.name.localizedCaseInsensitiveContains("DJI")
+                    || $0.name.caseInsensitiveCompare("Wireless Mic Rx") == .orderedSame
+            }) {
+                DJIMicButtonPreferences(controller: controller)
+            }
 
             Section {
                 PermissionRow(title: "Microphone", detail: "Capture audio while dictating.", granted: controller.permissions.microphone,
