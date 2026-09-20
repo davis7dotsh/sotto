@@ -9,12 +9,12 @@ The server is an independent TypeScript/Fastify HTTP process that owns models, s
 
 ## Linux
 
-The release workflow publishes `sotto-server-linux-x64-cuda.tar.gz` on `server-v*` tags and manual dispatch. Extract that tarball to `/opt/sotto`. That package is Ampere and newer only: SM 80, 86, 89, 90, 120, and 121. Tesla T4 and RTX 20-series (SM 75) will not run it. The host NVIDIA driver must match CUDA 13.0.2: the helpers load `libcuda.so.1` from the driver, and the package does not include the CUDA toolkit. Keep model weights outside the package.
+The release workflow publishes `sotto-server-linux-x64-cuda.tar.gz` on `server-v*` tags and manual dispatch. Extract that tarball to `/opt/sotto`. That package is Ampere and newer only: SM 80, 86, 89, 90, 120, and 121. Tesla T4 and RTX 20-series (SM 75) will not run it. The helpers load `libcuda.so.1` from the host driver. CUDA 13.0.2 needs Linux driver 580.95.05 or newer, and newer compatible drivers work. The package does not include the CUDA toolkit. Keep model weights outside the package.
 
 The unit listens on `0.0.0.0` as the `sotto` user. That user must be able to open the host NVIDIA device nodes. If those nodes are group-accessible only, add `sotto` to that group (usually `render` or `video`).
 
 ```sh
-sudo useradd --system --home /var/lib/sotto --shell /usr/sbin/nologin sotto
+sudo useradd --system --user-group --home /var/lib/sotto --shell /usr/sbin/nologin sotto
 sudo mkdir -p /opt/sotto
 sudo install -d -o sotto -g sotto -m 750 /var/lib/sotto /var/lib/sotto/models
 sudo install -d -o sotto -g sotto -m 700 /etc/sotto
