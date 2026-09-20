@@ -89,6 +89,14 @@ final class SottoController: ObservableObject {
     @Published var errorMessage: String?
     @Published var permissions: PermissionSnapshot
     @Published var isHotkeyActive = false
+    @Published var djiMicButtonEnabled = false {
+        didSet {
+            guard djiMicButtonEnabled != oldValue else { return }
+            if !applyingConfiguration { configuration.update { $0.djiMicButtonEnabled = djiMicButtonEnabled } }
+            refreshDJIMicButton()
+        }
+    }
+    @Published private(set) var djiMicButtonStatus: DJIMicButtonStatus = .disabled
     @Published private(set) var isCheckingShortcut = false
     @Published private(set) var shortcutCheckText = ""
     @Published var shortcut: HoldKey = .rightOption {
@@ -146,6 +154,9 @@ final class SottoController: ObservableObject {
     private let recorder = AudioRecorder()
     private let audioDevices = AudioDeviceStore()
     private let hotkey = HotkeyMonitor()
+    private let djiMicButton = DJIMicButtonMonitor()
+    private var djiSuspensions: Set<String> = []
+    private var recordingTrigger: DictationTrigger?
     private let inserter = TextInserter()
     private var subscriptions: Set<AnyCancellable> = []
     private var applyingConfiguration = false
@@ -183,6 +194,7 @@ final class SottoController: ObservableObject {
     private var observers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
     private var lockObserver: NSObjectProtocol?
+    private var unlockObserver: NSObjectProtocol?
 
     init(configuration: ConfigurationStore, startServices: Bool = true) {
         self.configuration = configuration
@@ -204,6 +216,7 @@ final class SottoController: ObservableObject {
         CapturedAudio.cleanupOrphans()
         try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appendingPathComponent("Sotto-remote-preview"))
         hasInitialized = true
+        refreshDJIMicButton()
         updateLoginItem()
         refreshServer()
         monitorTask = Task { [weak self] in
@@ -222,6 +235,7 @@ final class SottoController: ObservableObject {
         applyingConfiguration = true
         if let key = HoldKey(rawValue: settings.holdKey), shortcut != key { shortcut = key }
         if launchAtLogin != settings.launchAtLogin { launchAtLogin = settings.launchAtLogin }
+        if djiMicButtonEnabled != settings.djiMicButtonEnabled { djiMicButtonEnabled = settings.djiMicButtonEnabled }
         applyingConfiguration = false
     }
 
@@ -651,7 +665,7 @@ final class SottoController: ObservableObject {
     func toggleTestRecording() {
         guard !hotkey.isHoldingFn else { return }
         if isCapturing { finishDictation() }
-        else if !isBusy { beginDictation(isTest: true) }
+        else if !isBusy { beginDictation(trigger: .test) }
     }
 
     func cancelDictation() {
@@ -672,6 +686,7 @@ final class SottoController: ObservableObject {
     }
 
     private func resetSession() {
+        recordingTrigger = nil
         sessionID = UUID()
         microphoneStartTask?.cancel(); microphoneStartTask = nil
         transcriptionTask?.cancel(); transcriptionTask = nil
@@ -745,10 +760,11 @@ final class SottoController: ObservableObject {
         monitorTask?.cancel(); refreshTask?.cancel(); hudTask?.cancel(); permissionTask?.cancel()
         configuration.stopWatching()
         subscriptions.removeAll()
-        audioDevices.stop(); hotkey.stop(); continuationAnchors.removeAll()
+        audioDevices.stop(); hotkey.stop(); djiMicButton.stop(); continuationAnchors.removeAll()
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         if let lockObserver { DistributedNotificationCenter.default().removeObserver(lockObserver) }
+        if let unlockObserver { DistributedNotificationCenter.default().removeObserver(unlockObserver) }
         try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appendingPathComponent("Sotto-remote-preview"))
     }
 
@@ -757,26 +773,46 @@ final class SottoController: ObservableObject {
         recorder.onLevel = { [weak self] level in guard let self, isCapturing else { return }; recordingFeedback.append(level) }
         recorder.onInterruption = { [weak self] message in self?.failSession(message, cancelServer: true) }
         hotkey.onStatusChange = { [weak self] in self?.isHotkeyActive = $0 }
+        djiMicButton.onStatusChange = { [weak self] in self?.djiMicButtonStatus = $0 }
+        djiMicButton.onPress = { [weak self] in self?.receiveDJIMicButton($0) }
+        djiMicButton.onDisconnect = { [weak self] id in
+            guard let self, isCapturing, recordingTrigger == .dji(id) else { return }
+            cancelDictation()
+        }
         hotkey.onPress = { [weak self] in
             guard let self else { return }
             if isCheckingShortcut { appendShortcutCheck("Shortcut recognized. Recording was intentionally skipped.") }
-            else { beginDictation(isTest: false) }
+            else { beginDictation(trigger: .keyboard) }
         }
         hotkey.onRelease = { [weak self] in
             guard let self else { return }
             if isCheckingShortcut { appendShortcutCheck("Hold released."); return }
-            if !isTestSession { finishDictation() }
+            if recordingTrigger == .keyboard { finishDictation() }
         }
         hotkey.onCancel = { [weak self] in
             guard let self else { return }
             if isCheckingShortcut { appendShortcutCheck("Hold cancelled; microphone stayed off.") }
-            else if isBusy { cancelDictation() }
+            else if isBusy, recordingTrigger == .keyboard { cancelDictation() }
+        }
+        hotkey.onEscape = { [weak self] in
+            guard let self, !isCheckingShortcut else { return }
+            if isBusy { cancelDictation() }
             else { dismissFeedback() }
         }
     }
 
-    private func beginDictation(isTest: Bool) {
+    private func receiveDJIMicButton(_ deviceID: UInt64) {
+        guard djiMicButtonEnabled, !isCheckingShortcut, !isShuttingDown, djiSuspensions.isEmpty else { return }
+        switch DictationTrigger.djiButtonAction(deviceID: deviceID, activity: activity, current: recordingTrigger) {
+        case .start: beginDictation(trigger: .dji(deviceID))
+        case .finish: finishDictation()
+        case .ignore: break
+        }
+    }
+
+    private func beginDictation(trigger: DictationTrigger) {
         guard !isBusy, !isShuttingDown else { return }
+        let isTest = trigger == .test
         stopShortcutCheck()
         guard isServerReady else { showError(serverStatusMessage); refreshServer(); onShowWindow?(); return }
         guard permissions.microphone else { showError("Allow microphone access, then try again."); onShowWindow?(); return }
@@ -787,6 +823,7 @@ final class SottoController: ObservableObject {
         sessionID = UUID()
         let current = sessionID
         isTestSession = isTest
+        recordingTrigger = trigger
         serverSealed = false
         recordingClipboardChangeCount = NSPasteboard.general.changeCount
         insertionDestination = nil
@@ -1038,11 +1075,32 @@ final class SottoController: ObservableObject {
         })
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.willPowerOffNotification] {
             workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) {
-                [weak self] _ in MainActor.assumeIsolated { self?.restForSystem() }
+                [weak self] _ in MainActor.assumeIsolated {
+                    self?.djiSuspensions.insert(name.rawValue)
+                    self?.restForSystem()
+                }
+            })
+        }
+        for (resume, pause) in [(NSWorkspace.didWakeNotification, NSWorkspace.willSleepNotification),
+                                (NSWorkspace.sessionDidBecomeActiveNotification, NSWorkspace.sessionDidResignActiveNotification)] {
+            workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: resume, object: nil, queue: .main) {
+                [weak self] _ in MainActor.assumeIsolated {
+                    self?.djiSuspensions.remove(pause.rawValue)
+                    self?.refreshDJIMicButton()
+                }
             })
         }
         lockObserver = DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) {
-            [weak self] _ in MainActor.assumeIsolated { self?.restForSystem() }
+            [weak self] _ in MainActor.assumeIsolated {
+                self?.djiSuspensions.insert("screenLocked")
+                self?.restForSystem()
+            }
+        }
+        unlockObserver = DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) {
+            [weak self] _ in MainActor.assumeIsolated {
+                self?.djiSuspensions.remove("screenLocked")
+                self?.refreshDJIMicButton()
+            }
         }
     }
 
@@ -1053,11 +1111,24 @@ final class SottoController: ObservableObject {
             failSession("Recording interrupted while your Mac was away. Check shared history for completed results.", cancelServer: cancelServer)
         }
         continuationAnchors.removeAll()
+        refreshDJIMicButton()
     }
+
+    private func refreshDJIMicButton() {
+        guard hasInitialized, !isShuttingDown else { return }
+        djiMicButton.refresh(enabled: djiMicButtonEnabled, suspended: !djiSuspensions.isEmpty)
+    }
+
+    func retryDJIMicButton() {
+        guard hasInitialized, !isShuttingDown, !isBusy else { return }
+        djiMicButton.retry(enabled: djiMicButtonEnabled, suspended: !djiSuspensions.isEmpty)
+    }
+
     func refreshPermissions() {
         let current = PermissionSnapshot.capture()
         if current != permissions { permissions = current }
         audioDevices.refresh()
+        refreshDJIMicButton()
         if permissions.canListenForHotkey {
             isHotkeyActive = hotkey.start()
         } else {

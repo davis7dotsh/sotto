@@ -3,6 +3,30 @@ import XCTest
 @testable import Sotto
 
 final class HotkeyMonitorTests: XCTestCase {
+    @MainActor
+    func testEscapeIsSeparateFromAnInterruptedKeyboardHold() async throws {
+        let fixture = HotkeyFixture()
+        var escapes = 0
+        fixture.monitor.onEscape = { escapes += 1 }
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+        try fixture.send(.keyDown, code: 53)
+        XCTAssertEqual(escapes, 1)
+        XCTAssertEqual(fixture.cancels, 0)
+
+        try fixture.press()
+        try XCTUnwrap(fixture.delays.last).fire()
+        try fixture.send(.keyDown, code: 0)
+        XCTAssertEqual(fixture.cancels, 1)
+        XCTAssertEqual(escapes, 1, "A keyboard chord must not cancel a separate DJI recording")
+        try fixture.release()
+        try fixture.press()
+        try XCTUnwrap(fixture.delays.last).fire()
+        try fixture.send(.keyDown, code: 53)
+        XCTAssertEqual(escapes, 2)
+        XCTAssertEqual(fixture.cancels, 2)
+    }
+
     func testSelectedHIDFlagsSkipKeyStateFallback() {
         let keysAndFlags: [(HoldKey, CGEventFlags)] = [
             (.rightOption, CGEventFlags(rawValue: CGEventFlags.maskAlternate.rawValue | 0x40)),

@@ -6,20 +6,22 @@ public struct SottoConfiguration: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public var holdKey: String
     public var launchAtLogin: Bool
+    public var djiMicButtonEnabled: Bool
     public var microphones: MicrophonePreferences
 
     public static let `default` = SottoConfiguration()
 
-    public init(holdKey: String = "rightOption", launchAtLogin: Bool = false,
+    public init(holdKey: String = "rightOption", launchAtLogin: Bool = false, djiMicButtonEnabled: Bool = false,
                 microphones: MicrophonePreferences = MicrophonePreferences()) {
         schemaVersion = 1
         self.holdKey = holdKey
         self.launchAtLogin = launchAtLogin
+        self.djiMicButtonEnabled = djiMicButtonEnabled
         self.microphones = microphones
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, holdKey, launchAtLogin, microphones
+        case schemaVersion, holdKey, launchAtLogin, djiMicButtonEnabled, microphones
     }
 
     public init(from decoder: Decoder) throws {
@@ -34,6 +36,7 @@ public struct SottoConfiguration: Codable, Equatable, Sendable {
         }
         self.init(holdKey: holdKey,
                   launchAtLogin: try values.value(Bool.self, for: .launchAtLogin, default: false),
+                  djiMicButtonEnabled: try values.value(Bool.self, for: .djiMicButtonEnabled, default: false),
                   microphones: values.contains(.microphones)
                     ? try values.decode(StrictMicrophones.self, forKey: .microphones).preferences
                     : MicrophonePreferences())
