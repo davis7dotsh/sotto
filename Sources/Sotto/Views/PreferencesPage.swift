@@ -71,7 +71,7 @@ private struct DevicePreferencesForm: View {
             } header: { Text("This Mac").textCase(nil) }
             .disabled(controller.isBusy)
 
-            if controller.hasDetectedDJIMicrophone {
+            if controller.hasDetectedDJIMicrophone || controller.djiMicButtonEnabled {
                 DJIMicButtonPreferences(controller: controller)
             }
 
