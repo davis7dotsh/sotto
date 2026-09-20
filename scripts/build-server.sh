@@ -95,6 +95,11 @@ if [[ "$server_platform" == Darwin ]]; then
     codesign --force --sign - --entitlements Server/entitlements.plist "$staging_dir/sotto-server"
 fi
 cp "$vad_model" "$staging_dir/resources/silero-vad.bin"
+if [[ "$server_platform" == Linux ]]; then
+    # download-vad.sh keeps this public model at 0600. Root extraction would
+    # leave it unreadable by the sotto service user.
+    chmod 644 "$staging_dir/resources/silero-vad.bin"
+fi
 for library in whisper llama; do
     license_path="$project_dir/vendor/$library.cpp/LICENSE"
     if [[ ! -f "$license_path" && "${SOTTO_SKIP_NATIVE:-0}" == 1 ]]; then
@@ -109,6 +114,9 @@ done
 cp Resources/*-LICENSE.txt THIRD_PARTY_NOTICES.md "$staging_dir/resources/"
 bun Server/scripts/licenses.ts "$staging_dir/resources/javascript-LICENSES.txt"
 cp Server/README.md "$staging_dir/README.md"
+if [[ "$server_platform" == Linux ]]; then
+    cp Server/sotto-server.service "$staging_dir/sotto-server.service"
+fi
 prior_package="$project_dir/build/.server-previous-$$"
 if [[ -d build/server ]]; then mv build/server "$prior_package"; fi
 if ! mv "$staging_dir" "$project_dir/build/server"; then
