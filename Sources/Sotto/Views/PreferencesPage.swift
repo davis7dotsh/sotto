@@ -71,10 +71,7 @@ private struct DevicePreferencesForm: View {
             } header: { Text("This Mac").textCase(nil) }
             .disabled(controller.isBusy)
 
-            if controller.microphones.availableDevices.contains(where: {
-                $0.name.localizedCaseInsensitiveContains("DJI")
-                    || $0.name.caseInsensitiveCompare("Wireless Mic Rx") == .orderedSame
-            }) {
+            if controller.hasDetectedDJIMicrophone {
                 DJIMicButtonPreferences(controller: controller)
             }
 

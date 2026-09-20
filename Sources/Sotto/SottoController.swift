@@ -89,6 +89,7 @@ final class SottoController: ObservableObject {
     @Published var errorMessage: String?
     @Published var permissions: PermissionSnapshot
     @Published var isHotkeyActive = false
+    @Published private(set) var hasDetectedDJIMicrophone = UserDefaults.standard.bool(forKey: "hasDetectedDJIMicrophone")
     @Published var djiMicButtonEnabled = false {
         didSet {
             guard djiMicButtonEnabled != oldValue else { return }
@@ -769,7 +770,17 @@ final class SottoController: ObservableObject {
     }
 
     private func bindServices() {
-        audioDevices.onChange = { [weak self] devices, defaultUID in self?.microphones.update(devices: devices, systemDefaultUID: defaultUID) }
+        audioDevices.onChange = { [weak self] devices, defaultUID in
+            guard let self else { return }
+            microphones.update(devices: devices, systemDefaultUID: defaultUID)
+            if !hasDetectedDJIMicrophone, devices.contains(where: {
+                $0.name.localizedCaseInsensitiveContains("DJI")
+                    || $0.name.caseInsensitiveCompare("Wireless Mic Rx") == .orderedSame
+            }) {
+                hasDetectedDJIMicrophone = true
+                UserDefaults.standard.set(true, forKey: "hasDetectedDJIMicrophone")
+            }
+        }
         recorder.onLevel = { [weak self] level in guard let self, isCapturing else { return }; recordingFeedback.append(level) }
         recorder.onInterruption = { [weak self] message in self?.failSession(message, cancelServer: true) }
         hotkey.onStatusChange = { [weak self] in self?.isHotkeyActive = $0 }
