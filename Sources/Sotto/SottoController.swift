@@ -122,6 +122,7 @@ final class SottoController: ObservableObject {
     private var historyRevision = 0
     private var recordingHistoryIDs = Set<UUID>()
     private var recordingSnapshots: [UUID: RecordingSnapshot] = [:]
+    private var selectedGenerationDetailID: UUID?
     @Published private(set) var generationDetails: [UUID: GenerationRecord] = [:]
     @Published private(set) var loadingGenerationDetails = Set<UUID>()
     @Published private(set) var pendingRecordingCount = 0
@@ -160,6 +161,7 @@ final class SottoController: ObservableObject {
     private let audioDevices = AudioDeviceStore()
     private let hotkey = HotkeyMonitor()
     private let inserter = TextInserter()
+    private let serverSession: URLSession
     private var subscriptions: Set<AnyCancellable> = []
     private var applyingConfiguration = false
     private var recordingTimer: Timer?
@@ -206,8 +208,9 @@ final class SottoController: ObservableObject {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var lockObserver: NSObjectProtocol?
 
-    init(configuration: ConfigurationStore, startServices: Bool = true) {
+    init(configuration: ConfigurationStore, startServices: Bool = true, serverSession: URLSession = .shared) {
         self.configuration = configuration
+        self.serverSession = serverSession
         preferences = ClientPreferencesStore(root: configuration.url.deletingLastPathComponent())
         microphones = MicrophonePreferencesStore(configuration: configuration)
         permissions = startServices ? PermissionSnapshot.capture()
@@ -248,7 +251,7 @@ final class SottoController: ObservableObject {
     }
 
     private func client() throws -> ServerClient {
-        try ServerClient(endpoint: preferences.endpoint, token: preferences.token)
+        try ServerClient(endpoint: preferences.endpoint, token: preferences.token, session: serverSession)
     }
 
     func refreshServer() {
@@ -299,6 +302,7 @@ final class SottoController: ObservableObject {
         historyCursor = nil
         recordingHistoryCursor = nil
         generationDetails = [:]
+        selectedGenerationDetailID = nil
         recordingHistoryIDs = []
         recordingSnapshots = [:]
         historyRevision += 1
@@ -383,19 +387,28 @@ final class SottoController: ObservableObject {
     }
 
     func loadGenerationDetail(_ id: UUID) {
+        // Selection changes also fence older responses when this detail is already cached.
+        selectedGenerationDetailID = id
         guard recordingHistoryIDs.contains(id), generationDetails[id] == nil,
               !loadingGenerationDetails.contains(id) else { return }
+        let endpoint = preferences.endpoint
+        let source = historySourceFilter
         loadingGenerationDetails.insert(id)
         Task { [weak self] in
             guard let self else { return }
             defer { loadingGenerationDetails.remove(id) }
             do {
-                let endpoint = preferences.endpoint
                 let value = try await client().materializedRecording(id)
-                guard endpoint == preferences.endpoint else { return }
-                // Long transcripts belong to the detail pane, never list pages.
+                guard selectedGenerationDetailID == id, endpoint == preferences.endpoint,
+                      source == historySourceFilter, !Task.isCancelled else { return }
+                // Keep only the selected full transcript: long sessions must not
+                // accumulate in memory while browsing the compact history list.
                 if value.status == .completed { generationDetails = [id: value] }
-            } catch { errorMessage = error.localizedDescription }
+            } catch {
+                guard selectedGenerationDetailID == id, endpoint == preferences.endpoint,
+                      source == historySourceFilter, !Task.isCancelled else { return }
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -408,6 +421,7 @@ final class SottoController: ObservableObject {
         historyCursor = nil
         recordingHistoryCursor = nil
         generationDetails = [:]
+        selectedGenerationDetailID = nil
         recordingHistoryIDs = []
         recordingSnapshots = [:]
         historyRevision += 1

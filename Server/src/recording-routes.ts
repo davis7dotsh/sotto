@@ -5,7 +5,7 @@ import { ServiceError } from "./errors.ts";
 import {
   decodeRecordingAudioMessage,
   parseRecordingClientMessage,
-  MAXIMUM_RECORDING_HEADER_BYTES,
+  MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES,
   MAXIMUM_RECORDING_IN_FLIGHT_BYTES,
   MAXIMUM_RECORDING_MESSAGE_BYTES,
   MAXIMUM_RECORDING_PCM_BYTES,
@@ -36,7 +36,11 @@ const rawBuffer = (data: RawData) =>
   Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data);
 
 const maximumQueuedMessages = 16;
-const maximumOutboundBytes = 2 * 1024 * 1024;
+const maximumOutboundBytes = MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES;
+const maximumPayloadBytes = Math.max(
+  MAXIMUM_RECORDING_MESSAGE_BYTES,
+  MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES,
+);
 const heartbeatInterval = 30_000;
 const progressInterval = 500;
 
@@ -117,7 +121,7 @@ function streamRecording(socket: WebSocket, id: string, service: RecordingServic
       send(ack);
       return;
     }
-    if (buffer.length > MAXIMUM_RECORDING_HEADER_BYTES)
+    if (buffer.length > MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES)
       throw new ServiceError(
         413,
         "message_too_large",
@@ -138,6 +142,11 @@ function streamRecording(socket: WebSocket, id: string, service: RecordingServic
       const snapshot = await service.resume(id);
       epoch = snapshot.epoch;
       unsubscribe = service.subscribe(id, progress);
+      if (closed) {
+        unsubscribe();
+        unsubscribe = undefined;
+        return;
+      }
       send({ type: "snapshot", snapshot });
     } else if (parsed.value.type === "stop") {
       requireEpoch(parsed.value.epoch);
@@ -173,7 +182,7 @@ function streamRecording(socket: WebSocket, id: string, service: RecordingServic
   socket.on("message", (data, binary) => {
     const length = rawLength(data);
     if (
-      length > MAXIMUM_RECORDING_MESSAGE_BYTES ||
+      length > (binary ? MAXIMUM_RECORDING_MESSAGE_BYTES : maximumPayloadBytes) ||
       queuedBytes + length > MAXIMUM_RECORDING_IN_FLIGHT_BYTES ||
       queuedMessages >= maximumQueuedMessages
     ) {
@@ -228,7 +237,7 @@ export function registerRecordingRoutes(app: FastifyInstance, service: Recording
   app.register(async (routes) => {
     await routes.register(websocket, {
       options: {
-        maxPayload: MAXIMUM_RECORDING_MESSAGE_BYTES,
+        maxPayload: maximumPayloadBytes,
         perMessageDeflate: false,
         handleProtocols: (protocols) =>
           protocols.has(RECORDING_WS_PROTOCOL) ? RECORDING_WS_PROTOCOL : false,

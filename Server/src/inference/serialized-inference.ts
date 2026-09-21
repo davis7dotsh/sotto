@@ -37,11 +37,18 @@ class InferenceScope implements InferenceBackend {
   private controller = new AbortController();
   private closed = false;
   private pending = new Set<Promise<unknown>>();
+  readonly findSpeechBoundary: InferenceBackend["findSpeechBoundary"];
 
   constructor(
     private readonly scheduler: InferenceScheduler,
     private readonly backend: InferenceBackend,
-  ) {}
+  ) {
+    const boundary = backend.findSpeechBoundary;
+    this.findSpeechBoundary = boundary
+      ? (audioPath, signal) =>
+          this.run((combined) => boundary.call(backend, audioPath, combined), signal)
+      : undefined;
+  }
 
   get timedSpeechSpans() {
     return this.backend.timedSpeechSpans;
@@ -74,14 +81,6 @@ class InferenceScope implements InferenceBackend {
     const [path, language, terms, progress, signal] = args;
     return this.run(
       (combined) => this.backend.transcribe(path, language, terms, progress, combined),
-      signal,
-    );
-  }
-
-  findSpeechBoundary(audioPath: string, signal?: AbortSignal) {
-    return this.run(
-      (combined) =>
-        this.backend.findSpeechBoundary?.(audioPath, combined) ?? Promise.resolve(undefined),
       signal,
     );
   }

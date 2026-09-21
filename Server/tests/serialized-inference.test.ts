@@ -2,6 +2,24 @@ import { expect, test } from "bun:test";
 import { FakeInference } from "./support.ts";
 import { InferenceScheduler } from "../src/inference/serialized-inference.ts";
 
+test("model scopes preserve optional boundary capability and its backend receiver", async () => {
+  const ordinary = new InferenceScheduler(new FakeInference());
+  expect(ordinary.scope().findSpeechBoundary).toBeUndefined();
+  await ordinary.shutdown();
+  class BoundaryBackend extends FakeInference {
+    marker = "boundary backend";
+    async findSpeechBoundary(_path: string, signal?: AbortSignal) {
+      expect(this.marker).toBe("boundary backend");
+      signal?.throwIfAborted();
+      return 32.5;
+    }
+  }
+  const capable = new InferenceScheduler(new BoundaryBackend());
+  const scope = capable.scope();
+  expect(await scope.findSpeechBoundary?.("window.wav")).toBe(32.5);
+  await capable.shutdown();
+});
+
 test("legacy and session callers share a bounded model queue", async () => {
   const started: string[] = [];
   let release: (() => void) | undefined;

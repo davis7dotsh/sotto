@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   decodeRecordingAudioMessage,
   encodeRecordingAudioMessage,
   MAXIMUM_RECORDING_HEADER_BYTES,
+  MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES,
   MAXIMUM_RECORDING_MESSAGE_BYTES,
   MAXIMUM_RECORDING_PCM_BYTES,
   parseRecordingClientMessage,
@@ -213,7 +214,8 @@ describe("long-recording control contract", () => {
       "{",
       { type: "stop", epoch: 0, runs: [] },
       { type: "other" },
-      " ".repeat(MAXIMUM_RECORDING_HEADER_BYTES + 1),
+      " ".repeat(MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES + 1),
+      { type: "resume", padding: "x".repeat(MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES) },
     ])
       expect(parseRecordingClientMessage(input).ok).toBe(false);
     expect(parseRecordingClientMessage('{"type":"resume"}')).toEqual({
@@ -224,5 +226,34 @@ describe("long-recording control contract", () => {
       ok: true,
       value: { type: "ping" },
     });
+  });
+
+  test("large run manifests use the control budget independently of the audio header budget", () => {
+    const runs = Array.from({ length: 300 }, () => ({ runID: randomUUID(), inferenceFrames: 0 }));
+    const stop: RecordingStopRequest = {
+      type: "stop",
+      epoch: 1,
+      runs,
+      runTimings: runs.map(({ runID }) => ({
+        runID,
+        startedAt: "2026-01-01T00:00:00Z",
+        endedAt: "2026-01-01T00:00:00Z",
+      })),
+    };
+    const json = JSON.stringify(stop);
+    expect(Buffer.byteLength(json)).toBeGreaterThan(MAXIMUM_RECORDING_HEADER_BYTES);
+    expect(Buffer.byteLength(json)).toBeLessThan(MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES);
+    expect(parseRecordingClientMessage(json)).toEqual({ ok: true, value: stop });
+    expect(parseRecordingClientMessage(stop)).toEqual({ ok: true, value: stop });
+    const oversized = {
+      ...stop,
+      type: "pause",
+      interruption: "x".repeat(MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES),
+    };
+    expect(parseRecordingClientMessage(JSON.stringify(oversized)).ok).toBe(false);
+    expect(parseRecordingClientMessage(oversized).ok).toBe(false);
+    const circular: { type: "ping"; circular?: unknown } = { type: "ping" };
+    circular.circular = circular;
+    expect(parseRecordingClientMessage(circular).ok).toBe(false);
   });
 });

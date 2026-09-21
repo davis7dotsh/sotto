@@ -13,7 +13,7 @@ import type {
   PreferencesSnapshot,
 } from "./api.ts";
 import {
-  MAXIMUM_RECORDING_HEADER_BYTES,
+  MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES,
   type RecordingAudioHeader,
   type RecordingSnapshot,
   type RecordingRunEndpoint,
@@ -617,7 +617,7 @@ export class RecordingService {
     if (
       !Array.isArray(runs) ||
       !runs.length ||
-      Buffer.byteLength(JSON.stringify(runs)) > MAXIMUM_RECORDING_HEADER_BYTES ||
+      Buffer.byteLength(JSON.stringify(runs)) > MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES ||
       new Set(runs.map((run) => run.runID)).size !== runs.length ||
       runs.some(
         (run) =>
@@ -676,7 +676,7 @@ export class RecordingService {
   ) {
     if (
       !Array.isArray(timings) ||
-      Buffer.byteLength(JSON.stringify(timings)) > MAXIMUM_RECORDING_HEADER_BYTES
+      Buffer.byteLength(JSON.stringify(timings)) > MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES
     )
       throw failure("invalid_timing", "Capture timings exceed the control budget.", 400);
     const normalized = timings.map((timing) => ({

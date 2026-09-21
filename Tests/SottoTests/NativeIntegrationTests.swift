@@ -4,12 +4,114 @@ import AVFoundation
 import AudioToolbox
 import CoreAudio
 import CoreGraphics
+import SottoAPI
 import SottoCore
 import SwiftUI
 import XCTest
 @testable import Sotto
 
+private final class HeldHistoryResponses: @unchecked Sendable {
+    private let lock = NSLock()
+    private var responses: [UUID: (Result<(Int, Data), Error>) -> Void] = [:]
+
+    func hold(_ id: UUID, _ completion: @escaping (Result<(Int, Data), Error>) -> Void) {
+        lock.withLock { responses[id] = completion }
+    }
+
+    func finish(_ id: UUID, data: Data) throws {
+        let completion = try XCTUnwrap(lock.withLock { responses.removeValue(forKey: id) })
+        completion(.success((200, data)))
+    }
+}
+
 final class NativeIntegrationTests: XCTestCase {
+    @MainActor
+    func testHistoryKeepsSelectedTranscriptWhenDetailResponsesFinishInReverseOrder() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sotto-history-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        try JSONSerialization.data(withJSONObject: ["endpoint": fixture.endpoint, "deviceID": "history-test", "deviceName": "History test"])
+            .write(to: root.appendingPathComponent("client.json"))
+        let controller = SottoController(configuration: ConfigurationStore(file: ConfigurationFile(url: root.appendingPathComponent("config.json"))),
+                                         startServices: false, serverSession: fixture.session)
+        let a = RecordingSnapshot(id: UUID(), requestID: UUID(), device: .init(id: "test", name: "Test"),
+                                  settings: .init(), captureState: .stopped, processingState: .completed)
+        let b = RecordingSnapshot(id: UUID(), requestID: UUID(), device: a.device, settings: a.settings,
+                                  captureState: .stopped, processingState: .completed)
+        var detailA = ServerClient.generationSummary(a)
+        detailA.finalText = "Full transcript A"
+        var detailB = ServerClient.generationSummary(b)
+        detailB.finalText = "Full transcript B"
+        let heldResponses = HeldHistoryResponses()
+        let aRequested = expectation(description: "A detail requested")
+        let bRequested = expectation(description: "B detail requested")
+        fixture.respondAsync = { request, completion in
+            do {
+                switch request.url!.path {
+                case "/v1/generations": completion(.success((200, try SottoAPI.encoder().encode(GenerationPage(items: [])))))
+                case "/v2/recordings": completion(.success((200, try RecordingWire.encoder().encode(RecordingPage(items: [a, b])))))
+                case "/v2/recordings/\(a.id)": heldResponses.hold(a.id, completion); aRequested.fulfill()
+                case "/v2/recordings/\(b.id)": heldResponses.hold(b.id, completion); bRequested.fulfill()
+                default: completion(.success((404, Data())))
+                }
+            } catch { completion(.failure(error)) }
+        }
+        let historyLoaded = expectation(description: "Compact history loaded")
+        var subscriptions = Set<AnyCancellable>()
+        controller.$generations.filter { $0.count == 2 }.prefix(1).sink { _ in historyLoaded.fulfill() }.store(in: &subscriptions)
+        controller.refreshHistory()
+        await fulfillment(of: [historyLoaded], timeout: 3)
+        XCTAssertTrue(controller.generations.allSatisfy { $0.finalText.isEmpty })
+
+        let bLoaded = expectation(description: "Selected B transcript loaded")
+        controller.$generationDetails.filter { $0[b.id]?.finalText == detailB.finalText }.prefix(1)
+            .sink { _ in bLoaded.fulfill() }.store(in: &subscriptions)
+        controller.loadGenerationDetail(a.id)
+        controller.loadGenerationDetail(b.id)
+        await fulfillment(of: [aRequested, bRequested], timeout: 3)
+        try heldResponses.finish(b.id, data: RecordingWire.encoder().encode(RecordingDetail(snapshot: b, result: detailB)))
+        await fulfillment(of: [bLoaded], timeout: 3)
+
+        let aFinished = expectation(description: "Older A response finished")
+        controller.$loadingGenerationDetails.filter { !$0.contains(a.id) }.prefix(1)
+            .sink { _ in aFinished.fulfill() }.store(in: &subscriptions)
+        try heldResponses.finish(a.id, data: RecordingWire.encoder().encode(RecordingDetail(snapshot: a, result: detailA)))
+        await fulfillment(of: [aFinished], timeout: 3)
+        XCTAssertEqual(controller.generationDetail(b.id)?.finalText, detailB.finalText)
+        XCTAssertEqual(Set(controller.generationDetails.keys), [b.id], "Only the selected full transcript should occupy the cache")
+
+        let aRequestedAgain = expectation(description: "A requested again")
+        fixture.respondAsync = { _, completion in heldResponses.hold(a.id, completion); aRequestedAgain.fulfill() }
+        controller.loadGenerationDetail(a.id)
+        await fulfillment(of: [aRequestedAgain], timeout: 3)
+        controller.loadGenerationDetail(b.id) // Selecting an already cached transcript must also fence A.
+        let aFinishedAgain = expectation(description: "Deselected A response finished")
+        controller.$loadingGenerationDetails.filter { !$0.contains(a.id) }.prefix(1)
+            .sink { _ in aFinishedAgain.fulfill() }.store(in: &subscriptions)
+        try heldResponses.finish(a.id, data: RecordingWire.encoder().encode(RecordingDetail(snapshot: a, result: detailA)))
+        await fulfillment(of: [aFinishedAgain], timeout: 3)
+        XCTAssertEqual(controller.generationDetail(b.id)?.finalText, detailB.finalText)
+        XCTAssertEqual(Set(controller.generationDetails.keys), [b.id])
+
+        let aReselectedRequest = expectation(description: "A requested before rapid reselection")
+        fixture.respondAsync = { _, completion in heldResponses.hold(a.id, completion); aReselectedRequest.fulfill() }
+        controller.loadGenerationDetail(a.id)
+        await fulfillment(of: [aReselectedRequest], timeout: 3)
+        let requestsBeforeReselection = fixture.requests.count
+        controller.loadGenerationDetail(b.id)
+        controller.loadGenerationDetail(a.id) // A is still loading, but it is the latest selection again.
+        XCTAssertEqual(fixture.requests.count, requestsBeforeReselection, "Reselection should reuse A's pending request")
+        let aLoaded = expectation(description: "Reselected A transcript loaded")
+        controller.$generationDetails.filter { $0[a.id]?.finalText == detailA.finalText }.prefix(1)
+            .sink { _ in aLoaded.fulfill() }.store(in: &subscriptions)
+        try heldResponses.finish(a.id, data: RecordingWire.encoder().encode(RecordingDetail(snapshot: a, result: detailA)))
+        await fulfillment(of: [aLoaded], timeout: 3)
+        XCTAssertEqual(controller.generationDetail(a.id)?.finalText, detailA.finalText)
+        XCTAssertEqual(Set(controller.generationDetails.keys), [a.id])
+    }
+
     @MainActor
     func testHiddenRecordingNoticeRemovesExtraWindowAreaWithoutMovingHUDContent() {
         let expanded = NSRect(x: 200, y: 100, width: DictationPanelLayout.contentSize.width,

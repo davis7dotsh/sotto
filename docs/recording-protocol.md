@@ -87,7 +87,8 @@ positive. There is no recording-duration or lifetime sequence ceiling.
 Resource bounds apply to individual transfers:
 
 - PCM: at most 1,048,576 bytes.
-- JSON header or control message: at most 16,384 bytes.
+- Audio JSON header: at most 16,384 bytes.
+- JSON control message, in either direction: at most 2,097,152 bytes.
 - Complete binary message: at most 1,064,964 bytes.
 - Combined queued/in-flight audio: at most four complete maximum messages.
 - Server JSON messages: at most 2,097,152 bytes, allowing accepted settings in snapshots.
@@ -178,8 +179,9 @@ Pause requires a nonempty endpoint list and exactly matching closed run timings.
 `endedAt` must be present and at or after `startedAt`. The optional nonnegative
 `gapBeforeMilliseconds` records the hiatus before that run; it is persisted
 explicitly rather than inferred from uploaded frame counts. Empty zero-frame
-runs can still be closed and represented honestly. Control messages retain the
-16 KiB bound without an independent capture-run count ceiling.
+runs can still be closed and represented honestly. Control messages use the
+2 MiB budget without an independent capture-run count ceiling; the 16 KiB
+header budget applies only to binary audio messages.
 
 The server persists immutable endpoints in `snapshot.closedRuns` and timelines
 in `snapshot.runTimings`. Identical pause replay is safe after reconnect;

@@ -13,7 +13,9 @@ export const MAXIMUM_RECORDING_HEADER_BYTES = 16_384;
 export const MAXIMUM_RECORDING_MESSAGE_BYTES =
   4 + MAXIMUM_RECORDING_HEADER_BYTES + MAXIMUM_RECORDING_PCM_BYTES;
 export const MAXIMUM_RECORDING_IN_FLIGHT_BYTES = 4 * MAXIMUM_RECORDING_MESSAGE_BYTES;
-export const MAXIMUM_RECORDING_SERVER_CONTROL_MESSAGE_BYTES = 2 * 1_048_576;
+export const MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES = 2 * 1_048_576;
+export const MAXIMUM_RECORDING_SERVER_CONTROL_MESSAGE_BYTES =
+  MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES;
 
 export type CreateRecordingRequest = CreateGenerationRequest;
 export type RecordingCapabilities = {
@@ -221,8 +223,8 @@ export function parseRecordingClientMessage(
 ): RecordingResult<RecordingClientMessage> {
   let value: unknown = input;
   if (typeof input === "string") {
-    if (Buffer.byteLength(input) > MAXIMUM_RECORDING_HEADER_BYTES)
-      return invalid("Recording control JSON exceeds the header size limit.");
+    if (Buffer.byteLength(input) > MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES)
+      return invalid("Recording control JSON exceeds the control size limit.");
     try {
       value = JSON.parse(input);
     } catch {
@@ -230,6 +232,14 @@ export function parseRecordingClientMessage(
     }
   }
   if (!object(value)) return invalid("Recording control message must be an object.");
+  if (typeof input !== "string") {
+    try {
+      if (Buffer.byteLength(JSON.stringify(value)) > MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES)
+        return invalid("Recording control JSON exceeds the control size limit.");
+    } catch {
+      return invalid("Recording control message is not JSON serializable.");
+    }
+  }
   if (value.type === "resume" || value.type === "ping")
     return { ok: true, value: { type: value.type } };
   if (value.type === "context") {
@@ -301,8 +311,8 @@ export function parseRecordingClientMessage(
       ...(runTimings === undefined ? {} : { runTimings }),
     };
   }
-  if (Buffer.byteLength(JSON.stringify(control)) > MAXIMUM_RECORDING_HEADER_BYTES)
-    return invalid("Recording control JSON exceeds the header size limit.");
+  if (Buffer.byteLength(JSON.stringify(control)) > MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES)
+    return invalid("Recording control JSON exceeds the control size limit.");
   return { ok: true, value: control };
 }
 

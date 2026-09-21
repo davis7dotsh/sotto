@@ -9,6 +9,8 @@ import { createHTTPServer } from "../src/http-server.ts";
 import type { DictionaryEntry, PreferencesSnapshot } from "../src/api.ts";
 import {
   encodeRecordingAudioMessage,
+  MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES,
+  MAXIMUM_RECORDING_HEADER_BYTES,
   MAXIMUM_RECORDING_MESSAGE_BYTES,
   RECORDING_WS_PROTOCOL,
   type RecordingAudioHeader,
@@ -354,6 +356,97 @@ describe("durable recording routes", () => {
     expect((await second.next("error")).code).toBe("stale_epoch");
   });
 
+  test("closing while resume is pending releases the subsequently created subscription", async () => {
+    const { headers, url, service, snapshot } = await fixture();
+    const { socket } = await connect(url, headers);
+    let unblock: (() => void) | undefined;
+    let entered: (() => void) | undefined;
+    let released: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const unsubscribed = new Promise<void>((resolve) => {
+      released = resolve;
+    });
+    const resume = service.resume.bind(service);
+    service.resume = async (id) => {
+      entered?.();
+      await blocked;
+      return resume(id);
+    };
+    const subscribe = service.subscribe.bind(service);
+    let active = 0;
+    service.subscribe = (id, callback) => {
+      active += 1;
+      const unsubscribe = subscribe(id, callback);
+      return () => {
+        active -= 1;
+        unsubscribe();
+        released?.();
+      };
+    };
+    cleanup.push(async () => {
+      unblock?.();
+    });
+    socket.send(JSON.stringify({ type: "resume" }));
+    await started;
+    const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()));
+    socket.terminate();
+    await closed;
+    unblock?.();
+    await unsubscribed;
+    expect(active).toBe(0);
+    await resume(snapshot.id);
+    expect(active).toBe(0);
+  });
+
+  test("large pause and final-stop manifests preserve hundreds of capture runs", async () => {
+    const { headers, url, service, snapshot } = await fixture();
+    const { socket, next } = await connect(url, headers);
+    socket.send(JSON.stringify({ type: "resume" }));
+    const epoch = (await next("snapshot")).snapshot.epoch;
+    const runs = Array.from({ length: 300 }, (_, index) => ({
+      runID: randomUUID().toUpperCase(),
+      inferenceFrames: index === 0 ? 16_000 : 0,
+    }));
+    const runTimings = runs.map((run, index) => ({
+      runID: run.runID,
+      startedAt: new Date(Date.UTC(2026, 0, 1) + index * 2_000).toISOString(),
+      endedAt: new Date(
+        Date.UTC(2026, 0, 1) + index * 2_000 + (index === 0 ? 1_000 : 0),
+      ).toISOString(),
+      gapBeforeMilliseconds: 0,
+    }));
+    expect(Buffer.byteLength(JSON.stringify(runs))).toBeGreaterThan(MAXIMUM_RECORDING_HEADER_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(runTimings))).toBeGreaterThan(
+      MAXIMUM_RECORDING_HEADER_BYTES,
+    );
+    socket.send(audio(epoch, runs[0]!.runID));
+    await next("ack");
+    const pause = JSON.stringify({ type: "pause", epoch, runs, runTimings });
+    expect(Buffer.byteLength(pause)).toBeGreaterThan(MAXIMUM_RECORDING_HEADER_BYTES);
+    expect(Buffer.byteLength(pause)).toBeLessThan(MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES);
+    socket.send(pause);
+    expect((await next("snapshot")).snapshot.closedRuns).toHaveLength(300);
+    socket.send(JSON.stringify({ type: "stop", epoch, runs, runTimings }));
+    const stopped = (await next("snapshot")).snapshot;
+    expect(stopped.stopRuns).toHaveLength(300);
+    expect(stopped.runTimings).toHaveLength(300);
+    const deadline = Date.now() + 5_000;
+    while (
+      (await service.get(snapshot.id)).processingState !== "completed" &&
+      Date.now() < deadline
+    )
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    const finished = await service.detail(snapshot.id);
+    expect(finished.snapshot.processingState).toBe("completed");
+    expect(finished.snapshot.transcribedFrames).toBe(16_000);
+    expect(finished.result?.finalText).toBe("Hello world.");
+  });
+
   test("closed capture runs survive pause and reconnect, then a new run completes the same recording", async () => {
     const { headers, url, service, snapshot } = await fixture();
     const first = await connect(url, headers);
@@ -429,13 +522,23 @@ describe("durable recording routes", () => {
     expect(finished.result?.finalText.length).toBeGreaterThan(0);
   }, 10_000);
 
-  test("socket maxPayload rejects oversized binary messages before service processing", async () => {
+  test("binary messages retain their smaller size bound when controls use a larger budget", async () => {
     const { headers, url, service, snapshot } = await fixture();
     const { socket } = await connect(url, headers);
     const closed = new Promise<number>((resolve) => socket.once("close", (code) => resolve(code)));
     socket.send(Buffer.alloc(MAXIMUM_RECORDING_MESSAGE_BYTES + 1));
     expect(await closed).toBe(1009);
     expect((await service.get(snapshot.id)).uploadedFrames).toBe(0);
+  });
+
+  test("socket maxPayload rejects controls larger than the two MiB control budget", async () => {
+    const { headers, url, service, snapshot } = await fixture();
+    const { socket } = await connect(url, headers);
+    const closed = new Promise<number>((resolve) => socket.once("close", (code) => resolve(code)));
+    socket.send(" ".repeat(MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES + 1));
+    expect(await closed).toBe(1009);
+    expect((await service.get(snapshot.id)).uploadedFrames).toBe(0);
+    expect((await service.get(snapshot.id)).stopRuns).toBeUndefined();
   });
 
   test("speech processing and compact progress advance before capture stops", async () => {
