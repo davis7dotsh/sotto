@@ -1,6 +1,8 @@
 # HTTP API
 
-API version 1, default port **8391**. [`Server/api/openapi.yaml`](../Server/api/openapi.yaml) defines the transport contract and generates TypeScript and Swift types. [`Sources/SottoAPI/API.swift`](../Sources/SottoAPI/API.swift) preserves the Swift client-facing facade and defaults. JSON uses whole-second ISO-8601 UTC dates. macOS and Linux expose the same API. See [server setup](../Server/README.md#remote-access) for authentication and endpoint configuration.
+Default port **8391**. [`Server/api/openapi.yaml`](../Server/api/openapi.yaml) defines the HTTP contract and generates TypeScript and Swift types. [`Sources/SottoAPI/API.swift`](../Sources/SottoAPI/API.swift) preserves the legacy client facade; `RecordingAPI.swift` defines the v2 recording messages. V1 dates use whole-second ISO-8601 UTC; v2 accepts fractional seconds and preserves capture timestamps. macOS and Linux expose the same packaged API. See [server setup](../Server/README.md#remote-access) for authentication and endpoint configuration.
+
+The current native client negotiates `/v2/recordings/capabilities` and uses durable recording admission, resumable WebSocket audio, during-capture processing, and one final delivery. The complete [recording protocol](recording-protocol.md) defines pause/stop, checksums, durable ACKs, connection fencing, recovery, paginated history, and per-run audio exports. Legacy v1 routes and semantics below remain available for old clients/imports. The reference Swift server implements v1 only and does not advertise long-recording capability.
 
 ## Routes
 

@@ -96,6 +96,10 @@ On Linux, replace the last path with the GGUF file. Add `--dev` for a developmen
 
 Check `curl http://localhost:8391/v1/health`; HTTP reachability alone does not mean the models are ready. The `ready` field means the server can accept a recording. Quitting a client does not stop this process. Use launchd, systemd, or container supervision for boot/restart behavior; the scripts do not install a service.
 
+Long recordings use `/v2/recordings` and an authenticated WebSocket with subprotocol `sotto.recording.v1`. Configure a reverse proxy to forward WebSocket upgrades as well as HTTP. The client negotiates capabilities before capture; legacy/reference servers cannot silently accept and clip a long recording. See the [recording protocol](../docs/recording-protocol.md).
+
+Keep the server data directory on persistent storage with room for audio, receipt journals, bounded processing windows, and optional exports. V2 sessions preserve acknowledged audio across disconnects/restarts and process bounded windows during capture. Idle socket leases can end without deleting audio. Failed speech work remains recoverable; rejected proofreading retains deterministic text. Original PCM retention defaults on and can use several hundred MiB per half hour. There is no duration cutoff or automatic archive expiry; explicit discard removes session audio.
+
 For server-only development alongside an installed Sotto instance, use `--port 8392 --data-dir "$PWD/.local/typescript-server" --dev` with your helper/model arguments. Start the executable directly or use `bun run dev:server` with those arguments. The client dev runner starts the app and defaults to port 8391; avoid it when preserving a running installation.
 
 | Argument | Environment variable |

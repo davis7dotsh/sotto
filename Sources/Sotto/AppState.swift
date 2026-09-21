@@ -8,7 +8,7 @@ enum DictationActivity: Equatable {
 }
 
 enum DictationDeliveryStatus: String, Equatable {
-    case none, inserted, copied, tested, listUpdated, unconfirmed, failed
+    case none, inserted, copied, tested, listUpdated, unconfirmed, failed, saved
 }
 
 enum ModelStatus: Equatable {

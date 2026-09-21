@@ -833,55 +833,42 @@ final class NativeIntegrationTests: XCTestCase {
         feedback.updateElapsed(1.99)
         feedback.updateElapsed(2.01)
         feedback.updateElapsed(10_000)
-        XCTAssertEqual(seconds, [1, 2, 180])
+        XCTAssertEqual(seconds, [1, 2, 10_000])
         feedback.reset()
-        XCTAssertEqual(seconds, [1, 2, 180, 0])
+        XCTAssertEqual(seconds, [1, 2, 10_000, 0])
         XCTAssertEqual(feedback.levels, Array(repeating: 0, count: 9))
     }
 
     @MainActor
-    func testRecordingLimitNoticeTracksFinalThirtySecondsAndExplicitStop() {
+    func testRecordingTransferNoticeChangesOnlyWhenConnectionOrBacklogChanges() {
         let feedback = RecordingFeedback()
-        var notices: [RecordingLimitNotice?] = []
-        let observation = feedback.$limitNotice.dropFirst().sink { notices.append($0) }
+        var notices: [RecordingTransferNotice?] = []
+        let observation = feedback.$transferNotice.dropFirst().sink { notices.append($0) }
         defer { observation.cancel() }
 
-        feedback.updateElapsed(149.99)
-        XCTAssertNil(feedback.limitNotice)
-        feedback.updateElapsed(150)
-        XCTAssertEqual(feedback.limitNotice?.text, "Recording limit in 0:30")
-        for _ in 0..<20 { feedback.updateElapsed(150.9); feedback.append(0.5) }
-        XCTAssertEqual(notices.count, 1, "Subsecond and waveform changes do not republish the warning")
-        feedback.updateElapsed(179)
-        XCTAssertEqual(feedback.limitNotice?.text, "Recording limit in 0:01")
-        feedback.updateElapsed(180)
-        feedback.finish(atLimit: true)
-        XCTAssertEqual(feedback.limitNotice, .stopped)
-        XCTAssertEqual(feedback.limitNotice?.text, "Stopped at the 3-minute limit")
-        feedback.clearLevels()
-        XCTAssertEqual(feedback.limitNotice, .stopped, "Processing retains the reason capture stopped")
+        feedback.updateTransfer(connected: false)
+        XCTAssertEqual(feedback.transferNotice?.text, "Saved locally")
+        for _ in 0..<20 { feedback.updateTransfer(connected: false); feedback.append(0.5) }
+        XCTAssertEqual(notices.count, 1, "Waveform and unchanged state do not republish the notice")
+        feedback.updateTransfer(connected: true, catchingUp: true)
+        XCTAssertEqual(feedback.transferNotice?.text, "Transferring saved audio")
+        feedback.updateTransfer(connected: true)
+        XCTAssertNil(feedback.transferNotice)
         feedback.reset()
-        XCTAssertNil(feedback.limitNotice, "A cancelled, dismissed, or new session starts without stale feedback")
-
-        feedback.updateElapsed(165)
-        feedback.finish(atLimit: false)
-        XCTAssertNil(feedback.limitNotice, "A normal release during the warning is not a cutoff")
+        XCTAssertEqual(notices.count, 3)
     }
 
     @MainActor
-    func testRecordingLimitNoticeKeepsItsFootprintWhenHiddenAndVisible() throws {
+    func testRecordingTransferNoticeKeepsItsFootprintWhenHiddenAndVisible() throws {
         let feedback = RecordingFeedback()
-        let view = NSHostingView(rootView: RecordingLimitNote(feedback: feedback)
+        let view = NSHostingView(rootView: RecordingTransferNote(feedback: feedback)
             .frame(width: DictationHUD.width, height: DictationHUD.noticeHeight))
         let expected = NSSize(width: DictationHUD.width, height: DictationHUD.noticeHeight)
-        for seconds in [0, 149, 150, 179] {
-            feedback.updateElapsed(Double(seconds))
+        for connected in [true, false, true] {
+            feedback.updateTransfer(connected: connected, catchingUp: true)
             view.layoutSubtreeIfNeeded()
             XCTAssertEqual(view.fittingSize, expected)
         }
-        feedback.finish(atLimit: true)
-        view.layoutSubtreeIfNeeded()
-        XCTAssertEqual(view.fittingSize, expected)
     }
 
     @MainActor

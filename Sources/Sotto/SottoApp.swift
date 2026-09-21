@@ -35,6 +35,7 @@ final class SottoAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     private var activitySubscription: AnyCancellable?
     private var configuration: ConfigurationStore?
     private var startupTask: Task<Void, Never>?
+    private var terminationTask: Task<Void, Never>?
     private var reopenRequested = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -81,12 +82,13 @@ final class SottoAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard terminationTask == nil else { return .terminateLater }
         configuration?.stopWatching()
-        controller?.shutdown()
-        guard startupTask != nil || (configuration?.pendingWriteCount ?? 0) > 0 else { return .terminateNow }
+        guard controller != nil || startupTask != nil || (configuration?.pendingWriteCount ?? 0) > 0 else { return .terminateNow }
         startupTask?.cancel()
-        Task {
+        terminationTask = Task {
             await startupTask?.value
+            await controller?.prepareToQuit()
             configuration?.stopWatching()
             await configuration?.flush()
             sender.reply(toApplicationShouldTerminate: true)
@@ -259,7 +261,7 @@ private final class DictationPanel: NSPanel {
         contentView = container
         container.addSubview(hostedHUD)
         hostedHUD.frame = DictationPanelLayout.contentFrame(in: frame.size)
-        noticeSubscription = controller.recordingFeedback.$limitNotice
+        noticeSubscription = controller.recordingFeedback.$transferNotice
             .map { $0 != nil }
             .removeDuplicates()
             .sink { [weak self] visible in self?.setNoticeVisible(visible) }

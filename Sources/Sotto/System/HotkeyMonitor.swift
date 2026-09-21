@@ -180,6 +180,8 @@ final class HotkeyMonitor {
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
     var onCancel: (() -> Void)?
+    /// System/input interruptions preserve audio; Escape remains explicit discard.
+    var onInterruption: (() -> Void)?
     /// Tap health, not a claim that a particular key event was delivered.
     var onStatusChange: ((Bool) -> Void)?
     /// Set only during an explicit, bounded shortcut check. No persistent log.
@@ -287,7 +289,7 @@ final class HotkeyMonitor {
             // The controller decides whether anything is cancellable, including
             // transcription after the hold key has already been released.
             let wasActive = active
-            if physicalDown { blockCurrentHold() }
+            if physicalDown { blockCurrentHold(explicitDiscard: true) }
             if !wasActive { onCancel?() }
             return
         }
@@ -386,7 +388,7 @@ final class HotkeyMonitor {
         onPress?()
     }
 
-    private func blockCurrentHold() {
+    private func blockCurrentHold(explicitDiscard: Bool = false) {
         onDiagnostic?("Hold interrupted; release the key before trying again.")
         blockedUntilRelease = true
         pendingPress?.cancel()
@@ -394,8 +396,14 @@ final class HotkeyMonitor {
         pendingPressID = nil
         if active {
             active = false
-            onCancel?()
+            if explicitDiscard { onCancel?() }
+            else { notifyInterruption() }
         }
+    }
+
+    private func notifyInterruption() {
+        if let onInterruption { onInterruption() }
+        else { onCancel?() }
     }
 
     private func release() {
@@ -475,7 +483,7 @@ final class HotkeyMonitor {
             return false
         }
         if let tap, tap.isValid(), tapAccess == access {
-            // All recovery paths cancel an in-flight hold and require a fresh
+            // All recovery paths interrupt an in-flight hold and require a fresh
             // release. start() used to re-enable blindly, retaining stale state.
             reset(cancelActive: true)
             blockAlreadyHeldKey()
@@ -533,7 +541,7 @@ final class HotkeyMonitor {
         blockedUntilRelease = false
         watchdog?.cancel()
         watchdog = nil
-        if cancelActive, wasActive { onCancel?() }
+        if cancelActive, wasActive { notifyInterruption() }
     }
 
     deinit {

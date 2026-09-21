@@ -55,9 +55,22 @@ for await (const chunk of process.stdin) {
       duration: 2,
       elapsed: 0.1,
       language: "en",
+      ...(request.type === "transcribe"
+        ? { segmentSpans: [{ text: "Hello world.", startSeconds: 0, endSeconds: 2 }] }
+        : {}),
     });
     if (request.type === "correct" && request.systemPrompt !== "Keep punctuation.") {
       emit({ type: "error", id: request.id, message: "Missing proofreading prompt." });
+      continue;
+    }
+    if (request.type === "boundary") {
+      emit({
+        type: "result",
+        id: request.id,
+        duration: 45,
+        ...(mode === "boundary" ? { boundarySeconds: 32.5 } : {}),
+        ...(mode === "invalid-boundary" ? { boundarySeconds: 46 } : {}),
+      });
       continue;
     }
     const terms = request.vocabularyTerms ?? [];
@@ -68,6 +81,27 @@ for await (const chunk of process.stdin) {
       duration: 2,
       elapsed: 0.1,
       language: "en",
+      ...(request.type === "transcribe"
+        ? { segmentSpans: [{ text: "Hello world.", startSeconds: 0, endSeconds: 2 }] }
+        : {}),
+      ...(request.type === "transcribe" && mode !== "missing-spans"
+        ? {
+            spans:
+              mode === "invalid-spans"
+                ? [{ text: "Hello world.", startSeconds: 1, endSeconds: 3 }]
+                : mode === "unordered-spans"
+                  ? [
+                      { text: "Hello", startSeconds: 1, endSeconds: 1.5 },
+                      { text: " world.", startSeconds: 0, endSeconds: 1 },
+                    ]
+                  : mode === "incomplete-spans"
+                    ? [{ text: "Hello", startSeconds: 0, endSeconds: 1 }]
+                    : [
+                        { text: "Hello", startSeconds: 0, endSeconds: 0.8 },
+                        { text: " world.", startSeconds: 0.8, endSeconds: 2 },
+                      ],
+          }
+        : {}),
       ...(request.type === "transcribe"
         ? {
             includedTerms: mode === "invalid-hints" ? ["invented"] : terms,

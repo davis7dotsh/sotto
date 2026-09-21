@@ -23,10 +23,18 @@ struct CapturedAudio: Sendable {
     let peak: Float
     /// Unmixed, unresampled PCM delivered by the selected input unit.
     let original: OriginalCapturedAudio?
+    let spool: RecordingSpool?
     fileprivate let directory: URL
 
-    /// The caller owns the recording after stop() succeeds, including its deletion.
+    init(url: URL, duration: TimeInterval, peak: Float, original: OriginalCapturedAudio?,
+         spool: RecordingSpool? = nil, directory: URL) {
+        self.url = url; self.duration = duration; self.peak = peak
+        self.original = original; self.spool = spool; self.directory = directory
+    }
+
+    /// Persistent spools require explicit discard; temporary legacy WAVs are owned by the caller.
     func cleanup() {
+        guard spool == nil else { return }
         try? FileManager.default.removeItem(at: directory)
     }
 
@@ -94,6 +102,7 @@ final class AudioRecorder {
     private let sleepNotifications: NotificationCenter
     private var request: AudioCaptureRequest?
     private var sleepObserver: NSObjectProtocol?
+    private var finishTask: Task<CapturedAudio, Error>?
 
     init(worker: AudioCaptureWorker? = nil,
          microphoneAuthorized: @escaping () -> Bool = { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized },
@@ -103,11 +112,11 @@ final class AudioRecorder {
         self.sleepNotifications = sleepNotifications ?? NSWorkspace.shared.notificationCenter
     }
 
-    func start(deviceID: AudioDeviceID? = nil, preserveOriginalAudio: Bool = false) async throws {
-        guard request == nil else { throw AudioRecordingError.alreadyRecording }
+    func start(deviceID: AudioDeviceID? = nil, preserveOriginalAudio: Bool = false, spool: RecordingSpool? = nil) async throws {
+        guard request == nil, finishTask == nil else { throw AudioRecordingError.alreadyRecording }
         guard microphoneAuthorized() else { throw AudioRecordingError.permissionRequired }
         guard !Task.isCancelled else { throw AudioRecordingError.cancelled }
-        let current = AudioCaptureRequest(onChunk: onChunk)
+        let current = AudioCaptureRequest(onChunk: onChunk, spool: spool)
         request = current
         sleepObserver = sleepNotifications.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
@@ -160,13 +169,23 @@ final class AudioRecorder {
         onLevel?(0)
     }
 
-    func stop() async throws -> CapturedAudio {
+    func stop(pausing: Bool = false, interruption: String? = nil) async throws -> CapturedAudio {
         guard let current = request else { throw AudioRecordingError.notRecording }
         current.release()
         request = nil
         removeSleepObserver()
         onLevel?(0)
-        return try await worker.stop(request: current)
+        let task = Task { try await worker.stop(request: current, pausing: pausing, interruption: interruption) }
+        finishTask = task
+        defer { finishTask = nil }
+        return try await task.value
+    }
+
+    /// Used by orderly termination: drain the admitted writer prefix before exit.
+    func preserve() async {
+        stopAcceptingAudio()
+        if let finishTask { _ = try? await finishTask.value }
+        else { _ = try? await stop(pausing: request?.spool != nil, interruption: "Recording paused when Sotto closed.") }
     }
 
     func cancel() {
@@ -180,7 +199,13 @@ final class AudioRecorder {
 
     private func interrupt(id: UUID, message: String) {
         guard request?.id == id else { return }
-        cancel()
+        if let request, request.spool != nil {
+            request.release()
+            removeSleepObserver()
+            onLevel?(0)
+        } else {
+            cancel()
+        }
         onInterruption?(message)
     }
 
@@ -204,6 +229,7 @@ private final class QueuedAudioHardware: AudioCaptureHardware, @unchecked Sendab
     private var onInterruption: (@Sendable (String) -> Void)?
     private var selectedDevice: AudioDeviceID?
     private var deviceObservers: [AudioDeviceObservation] = []
+    private var watchdog: DispatchSourceTimer?
 
     init(queue: DispatchQueue) { self.queue = queue }
 
@@ -228,7 +254,7 @@ private final class QueuedAudioHardware: AudioCaptureHardware, @unchecked Sendab
         let writer = try RecordingWriter(
             inputFormat: format, preserveOriginalAudio: preserveOriginalAudio, onLevel: onLevel,
             onError: { [weak self] message in self?.enqueueInterruption(id: id, message: message) },
-            onChunk: request.onChunk
+            onChunk: request.onChunk, spool: request.spool
         )
         self.writer = writer
         deviceObservers = [
@@ -249,6 +275,15 @@ private final class QueuedAudioHardware: AudioCaptureHardware, @unchecked Sendab
             self?.enqueueInterruption(id: id, message: InputAudioUnitError.driver("read input", status).localizedDescription)
         })
         guard AudioInputHardware.isAvailable(selectedDevice) else { throw AudioRecordingError.microphoneUnavailable }
+        let watchdog = DispatchSource.makeTimerSource(queue: queue)
+        watchdog.schedule(deadline: .now() + 3, repeating: 1)
+        watchdog.setEventHandler { [weak self, weak writer] in
+            guard let self, self.request?.id == id, self.request?.acceptsAudio == true,
+                  let writer, writer.secondsSinceCallback > 3 else { return }
+            self.interrupt(id: id, message: "The microphone stopped providing audio. Your saved recording has been preserved.")
+        }
+        self.watchdog = watchdog
+        watchdog.resume()
     }
 
     func stop() -> RecordingWriter? {
@@ -287,12 +322,24 @@ private final class QueuedAudioHardware: AudioCaptureHardware, @unchecked Sendab
         Logger(subsystem: "dev.davis.murmur", category: "audio-capture")
             .error("Capture interrupted: \(message, privacy: .public)")
         let callback = onInterruption
-        request?.cancel()
-        cancel()
+        if request?.spool != nil {
+            request?.release()
+            deviceObservers.forEach { $0.cancel() }
+            deviceObservers.removeAll()
+            watchdog?.cancel()
+            watchdog = nil
+            inputUnit?.stop()
+            inputUnit = nil
+        } else {
+            request?.cancel()
+            cancel()
+        }
         callback?(message)
     }
 
     private func detachMicrophone() {
+        watchdog?.cancel()
+        watchdog = nil
         deviceObservers.forEach { $0.cancel() }
         deviceObservers.removeAll()
         inputUnit?.stop()
@@ -311,7 +358,22 @@ private final class QueuedAudioHardware: AudioCaptureHardware, @unchecked Sendab
 final class RecordingWriter: @unchecked Sendable {
     private let queue = DispatchQueue(label: "local.sotto.audio-writer", qos: .userInitiated)
     private let admissionLock = NSLock()
+    private let failureNotifications = DispatchQueue(label: "local.sotto.audio-writer-failure", qos: .userInitiated)
+    private var failureNotificationSent = false
     private var accepting = true
+    private var finishScheduled = false
+    private var queuedBytes = 0
+    private var queuedSourceFrames: Int64 = 0
+    private var maximumObservedQueuedBytes = 0
+    private var lastCallback = DispatchTime.now().uptimeNanoseconds
+    /// Includes the buffer currently being converted, independent of network speed.
+    static let maximumQueuedPCMBytes = 8 * 1_048_576
+    private let spool: RecordingSpool?
+
+    var peakQueuedPCMBytes: Int { admissionLock.withLock { maximumObservedQueuedBytes } }
+    var secondsSinceCallback: Double {
+        admissionLock.withLock { Double(DispatchTime.now().uptimeNanoseconds - lastCallback) / 1_000_000_000 }
+    }
 
     private let directory: URL
     private let url: URL
@@ -335,7 +397,7 @@ final class RecordingWriter: @unchecked Sendable {
 
     init(inputFormat: AVAudioFormat, preserveOriginalAudio: Bool = false,
          onLevel: @escaping (Float) -> Void, onError: @escaping (String) -> Void,
-         onChunk: (@Sendable (CapturedAudioChunk) -> Void)? = nil) throws {
+         onChunk: (@Sendable (CapturedAudioChunk) -> Void)? = nil, spool: RecordingSpool? = nil) throws {
         // InputOnlyAudioUnit negotiates float32 PCM. Keep non-streaming callers
         // free to archive other PCM formats, but never label their bytes float32.
         guard !preserveOriginalAudio || onChunk == nil || inputFormat.commonFormat == .pcmFormatFloat32 else {
@@ -361,13 +423,20 @@ final class RecordingWriter: @unchecked Sendable {
         self.converter = converter
         self.onLevel = onLevel
         self.onError = onError
-        self.onChunk = onChunk
+        // Persistent transfer consumes committed spool batches; per-callback
+        // notifications would expose the intentionally uncheckpointed tail.
+        self.onChunk = spool == nil ? onChunk : nil
+        self.spool = spool
         converter.downmix = true
         converter.sampleRateConverterQuality = AVAudioQuality.high.rawValue
 
-        directory = FileManager.default.temporaryDirectory.appendingPathComponent("Sotto-Dev-recording-\(UUID().uuidString)", isDirectory: true)
+        directory = spool?.directory ?? FileManager.default.temporaryDirectory.appendingPathComponent("Sotto-Dev-recording-\(UUID().uuidString)", isDirectory: true)
         url = directory.appendingPathComponent("microphone.wav")
-        originalURL = preserveOriginalAudio ? directory.appendingPathComponent("original.wav") : nil
+        originalURL = preserveOriginalAudio && spool == nil ? directory.appendingPathComponent("original.wav") : nil
+        if let spool {
+            try spool.beginCapture(originalSampleRate: preserveOriginalAudio ? inputFormat.sampleRate : nil, originalChannels: preserveOriginalAudio ? Int(inputFormat.channelCount) : nil)
+            return
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         do {
             try queue.sync {
@@ -395,10 +464,40 @@ final class RecordingWriter: @unchecked Sendable {
     }
 
     func append(_ source: AVAudioPCMBuffer) {
-        // The input unit reuses its buffers. Copy only PCM memory here; never run
-        // conversion, metering, UI work, or disk I/O on the real-time callback.
-        guard source.frameLength > 0,
-              let copy = AVAudioPCMBuffer(pcmFormat: source.format, frameCapacity: source.frameLength) else { return }
+        guard source.frameLength > 0 else { return }
+        let sourceFrameCount = Int64(source.frameLength)
+        let byteCount = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: source.audioBufferList))
+            .reduce(0) { $0 + Int($1.mDataByteSize) }
+        // Reserve before allocating: a stalled writer cannot accumulate PCM copies.
+        admissionLock.lock()
+        guard accepting else { admissionLock.unlock(); return }
+        lastCallback = DispatchTime.now().uptimeNanoseconds
+        let queueLimit = spool == nil ? 48 * 1_048_576 : Self.maximumQueuedPCMBytes
+        guard byteCount <= queueLimit - queuedBytes,
+              spool == nil || queuedSourceFrames + sourceFrameCount <= Int64(source.format.sampleRate * 2) else {
+            accepting = false
+            let error = AudioRecordingError.processing("The audio writer could not keep up. The saved prefix has been preserved.")
+            failureNotificationSent = true
+            // Notification must not wait behind a stalled disk write. Hardware
+            // admission closes promptly while the existing writer prefix drains.
+            failureNotifications.async { [self] in onError(error.localizedDescription) }
+            queue.async { [self] in fail(error, notify: false) }
+            admissionLock.unlock()
+            return
+        }
+        queuedBytes += byteCount
+        queuedSourceFrames += sourceFrameCount
+        maximumObservedQueuedBytes = max(maximumObservedQueuedBytes, queuedBytes)
+        guard let copy = AVAudioPCMBuffer(pcmFormat: source.format, frameCapacity: source.frameLength) else {
+            queuedBytes -= byteCount
+            queuedSourceFrames -= sourceFrameCount
+            accepting = false
+            failureNotificationSent = true
+            failureNotifications.async { [self] in onError(AudioRecordingError.conversionUnavailable.localizedDescription) }
+            queue.async { [self] in fail(AudioRecordingError.conversionUnavailable, notify: false) }
+            admissionLock.unlock()
+            return
+        }
         copy.frameLength = source.frameLength
         let sourceBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: source.audioBufferList))
         let destinationBuffers = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
@@ -406,27 +505,43 @@ final class RecordingWriter: @unchecked Sendable {
             guard let sourceData = sourceBuffer.mData, let destinationData = destinationBuffer.mData else { continue }
             memcpy(destinationData, sourceData, Int(min(sourceBuffer.mDataByteSize, destinationBuffer.mDataByteSize)))
         }
-
-        admissionLock.lock()
-        if accepting {
-            queue.async { [self] in process(copy) }
+        queue.async { [self] in
+            process(copy)
+            admissionLock.withLock {
+                queuedBytes -= byteCount
+                queuedSourceFrames -= sourceFrameCount
+            }
         }
         admissionLock.unlock()
     }
 
-    func finish() async throws -> CapturedAudio {
+    /// A writer barrier used for deliberate checkpoints and deterministic tests.
+    /// It never waits from the hardware callback.
+    func checkpoint() async {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                do { try spool?.checkpoint() } catch { fail(error) }
+                continuation.resume()
+            }
+        }
+    }
+
+    func finish(pausing: Bool = false, interruption: String? = nil) async throws -> CapturedAudio {
         try await withCheckedThrowingContinuation { continuation in
             admissionLock.lock()
-            guard accepting else {
+            guard !finishScheduled, accepting || spool != nil || failureNotificationSent else {
                 admissionLock.unlock()
                 continuation.resume(throwing: AudioRecordingError.cancelled)
                 return
             }
             accepting = false
+            finishScheduled = true
             queue.async { [self] in
                 do {
-                    if let failure { throw failure }
-                    try flushConverter()
+                    if let failure, spool == nil { throw failure }
+                    if failure == nil { try flushConverter() }
+                    if pausing { try spool?.pauseCapture(interrupted: failure?.localizedDescription ?? interruption) }
+                    else { try spool?.seal(interrupted: failure?.localizedDescription ?? interruption) }
                     guard frames > 0 else { throw AudioRecordingError.noAudio }
                     file = nil // Close and finalize the WAV header before handing it off.
                     originalFile = nil
@@ -440,10 +555,11 @@ final class RecordingWriter: @unchecked Sendable {
                         )
                     }
                     continuation.resume(returning: CapturedAudio(
-                        url: url, duration: Double(frames) / format.sampleRate, peak: peak,
-                        original: original, directory: directory
+                        url: url, duration: Double(spool?.finalManifest.last?.inferenceFrames ?? frames) / format.sampleRate, peak: peak,
+                        original: original, spool: spool, directory: directory
                     ))
                 } catch {
+                    if let spool { try? spool.pauseCapture(interrupted: error.localizedDescription) }
                     discardFile()
                     continuation.resume(throwing: error)
                 }
@@ -454,9 +570,16 @@ final class RecordingWriter: @unchecked Sendable {
 
     func cancel() {
         admissionLock.lock()
-        if accepting {
+        if !finishScheduled {
             accepting = false
-            queue.async { [self] in discardFile() }
+            finishScheduled = true
+            queue.async { [self] in
+                if let spool {
+                    if failure == nil { try? flushConverter() }
+                    try? spool.pauseCapture(interrupted: "Recording interrupted before completion.")
+                }
+                discardFile()
+            }
         }
         admissionLock.unlock()
     }
@@ -469,12 +592,14 @@ final class RecordingWriter: @unchecked Sendable {
         }
         // Bound both files to the same admitted input interval. This also avoids
         // converting late driver buffers after the three-minute cap is reached.
-        let remainingInputFrames = AVAudioFramePosition(input.format.sampleRate * 180) - inputFrames
-        guard remainingInputFrames > 0 else { return }
-        input.frameLength = min(input.frameLength, AVAudioFrameCount(remainingInputFrames))
+        if spool == nil {
+            let remainingInputFrames = AVAudioFramePosition(input.format.sampleRate * 180) - inputFrames
+            guard remainingInputFrames > 0 else { return }
+            input.frameLength = AVAudioFrameCount(min(AVAudioFramePosition(input.frameLength), remainingInputFrames))
+        }
         do {
             try originalFile?.write(from: input)
-            if originalFile != nil { emitOriginal(input) }
+            if originalFile != nil || spool?.preservesOriginalAudio == true { try emitOriginal(input) }
             inputFrames += AVAudioFramePosition(input.frameLength)
         } catch {
             fail(error)
@@ -547,18 +672,22 @@ final class RecordingWriter: @unchecked Sendable {
     }
 
     private func write(_ buffer: AVAudioPCMBuffer) throws {
-        guard buffer.frameLength > 0, let samples = buffer.floatChannelData?[0], let file else { return }
+        guard buffer.frameLength > 0, let samples = buffer.floatChannelData?[0] else { return }
         // The controller stops the microphone at 180 seconds, but its timer can
         // run one callback late. Keep the WAV within the helper's strict limit.
-        let remainingFrames = AVAudioFramePosition(format.sampleRate * 180) - frames
-        guard remainingFrames > 0 else { return }
-        buffer.frameLength = min(buffer.frameLength, AVAudioFrameCount(remainingFrames))
-        try file.write(from: buffer)
-        onChunk?(.init(
+        if spool == nil {
+            let remainingFrames = AVAudioFramePosition(format.sampleRate * 180) - frames
+            guard remainingFrames > 0 else { return }
+            buffer.frameLength = AVAudioFrameCount(min(AVAudioFramePosition(buffer.frameLength), remainingFrames))
+        }
+        try file?.write(from: buffer)
+        let chunk = CapturedAudioChunk(
             kind: .normalized,
             data: Data(bytes: samples, count: Int(buffer.frameLength) * MemoryLayout<Float>.size),
             sampleRate: format.sampleRate, channels: 1
-        ))
+        )
+        try spool?.append(chunk)
+        onChunk?(chunk)
         for index in 0..<Int(buffer.frameLength) {
             let sample = samples[index]
             let magnitude = sample.isFinite ? abs(sample) : 0
@@ -577,8 +706,9 @@ final class RecordingWriter: @unchecked Sendable {
         frames += AVAudioFramePosition(buffer.frameLength)
     }
 
-    private func emitOriginal(_ buffer: AVAudioPCMBuffer) {
-        guard let onChunk, let samples = buffer.floatChannelData else { return }
+    private func emitOriginal(_ buffer: AVAudioPCMBuffer) throws {
+        guard spool != nil || onChunk != nil else { return }
+        guard let samples = buffer.floatChannelData else { return }
         let channels = Int(buffer.format.channelCount)
         let frameCount = Int(buffer.frameLength)
         let data: Data
@@ -595,18 +725,26 @@ final class RecordingWriter: @unchecked Sendable {
             }
             data = interleaved.withUnsafeBytes { Data($0) }
         }
-        onChunk(.init(kind: .original, data: data, sampleRate: buffer.format.sampleRate, channels: channels))
+        let chunk = CapturedAudioChunk(kind: .original, data: data, sampleRate: buffer.format.sampleRate, channels: channels)
+        try spool?.append(chunk)
+        onChunk?(chunk)
     }
 
-    private func fail(_ error: Error) {
+    private func fail(_ error: Error, notify: Bool = true) {
         guard failure == nil else { return }
         failure = error
-        onError(error.localizedDescription)
+        let shouldNotify = admissionLock.withLock {
+            accepting = false
+            let shouldNotify = notify && !failureNotificationSent
+            failureNotificationSent = true
+            return shouldNotify
+        }
+        if shouldNotify { onError(error.localizedDescription) }
     }
 
     private func discardFile() {
         file = nil
         originalFile = nil
-        try? FileManager.default.removeItem(at: directory)
+        if spool == nil { try? FileManager.default.removeItem(at: directory) }
     }
 }

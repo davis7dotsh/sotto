@@ -521,6 +521,36 @@ final class HotkeyMonitorTests: XCTestCase {
     }
 
     @MainActor
+    func testTapAndPermissionRecoveryPreserveAudioWhileEscapeIsExplicitDiscard() async throws {
+        let fixture = HotkeyFixture()
+        var interruptions = 0
+        fixture.monitor.onInterruption = { interruptions += 1 }
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+        try fixture.press()
+        fixture.delays.last?.fire()
+        try XCTUnwrap(fixture.taps.first).enabled = false
+        XCTAssertTrue(fixture.monitor.start())
+        XCTAssertEqual(interruptions, 1)
+        XCTAssertEqual(fixture.cancels, 0, "Tap recovery cannot discard a recording")
+        try fixture.release()
+
+        try fixture.press()
+        fixture.delays.last?.fire()
+        try fixture.send(.keyDown, code: 53)
+        XCTAssertEqual(fixture.cancels, 1, "Escape explicitly discards an accepted Option hold")
+        XCTAssertEqual(interruptions, 1)
+        try fixture.release()
+
+        try fixture.press()
+        fixture.delays.last?.fire()
+        fixture.permissions = PermissionSnapshot(microphone: true, accessibility: false, inputMonitoring: false)
+        fixture.healthCheck()
+        XCTAssertEqual(interruptions, 2)
+        XCTAssertEqual(fixture.cancels, 1, "Permission loss preserves the captured prefix")
+    }
+
+    @MainActor
     func testIdleHealthRepairsInvalidTapWithoutPollingForKeyPresses() async throws {
         let fixture = HotkeyFixture()
         XCTAssertTrue(fixture.monitor.start())

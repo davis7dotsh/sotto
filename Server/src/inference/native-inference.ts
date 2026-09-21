@@ -67,6 +67,16 @@ export interface SpeechInferenceResult {
   engineVersion?: string;
   modelSHA256?: string;
   hints?: ModelHintUsage;
+  /** Exact text pieces with request-relative acoustic timestamps, in order. */
+  spans?: SpeechSpan[];
+  /** Whole decoder segments, used for stable source checkpoints. */
+  segmentSpans?: SpeechSpan[];
+}
+
+export interface SpeechSpan {
+  text: string;
+  startSeconds: number;
+  endSeconds: number;
 }
 
 export interface ProofInferenceResult {
@@ -77,6 +87,8 @@ export interface ProofInferenceResult {
 }
 
 export interface InferenceBackend {
+  readonly timedSpeechSpans?: boolean;
+  findSpeechBoundary?(audioPath: string, signal?: AbortSignal): Promise<number | undefined>;
   readiness(proofreadingEnabled?: boolean): Promise<InferenceReadiness>;
   warmUp(proofreadingEnabled?: boolean, signal?: AbortSignal): Promise<void>;
   transcribe(
@@ -103,6 +115,34 @@ function bytes(value: string) {
 
 function validLanguage(language: string) {
   return language.length > 0 && bytes(language) <= 32 && !language.includes("\0");
+}
+
+export function validSpeechSpans(spans: SpeechSpan[] | undefined, duration: number, text: string) {
+  if (!spans || !Number.isFinite(duration) || duration < 0 || spans.length > 65_536) return false;
+  let start = 0;
+  let end = 0;
+  for (const span of spans) {
+    if (
+      !span.text.length ||
+      span.text.includes("\0") ||
+      !Number.isFinite(span.startSeconds) ||
+      !Number.isFinite(span.endSeconds) ||
+      span.startSeconds < start ||
+      span.endSeconds < end ||
+      span.endSeconds < span.startSeconds ||
+      span.endSeconds > duration ||
+      span.startSeconds < 0
+    )
+      return false;
+    start = span.startSeconds;
+    end = span.endSeconds;
+  }
+  return (
+    spans
+      .map((span) => span.text)
+      .join("")
+      .trim() === text
+  );
 }
 
 function vocabularyDiagnostics(
@@ -145,6 +185,7 @@ function vocabularyDiagnostics(
 
 /** The helper executables own inference; the server owns paths, deadlines and pins. */
 export class NativeInference implements InferenceBackend {
+  readonly timedSpeechSpans = true;
   private readonly configuration: InferenceConfiguration;
   private readonly speech: HelperProcess;
   private readonly proof: HelperProcess;
@@ -318,6 +359,16 @@ export class NativeInference implements InferenceBackend {
     let hints: ModelHintUsage | undefined;
     try {
       hints = vocabularyDiagnostics(response, vocabularyTerms);
+      if (!validSpeechSpans(response.spans, response.duration, response.text))
+        throw new InferenceError(
+          "invalidResponse",
+          "Whisper returned missing or invalid timed speech spans. Rebuild the speech helper to match this server.",
+        );
+      if (!validSpeechSpans(response.segmentSpans, response.duration, response.text))
+        throw new InferenceError(
+          "invalidResponse",
+          "Whisper returned invalid whole-segment coverage.",
+        );
     } catch (error) {
       this.speech.shutdown();
       throw error;
@@ -328,10 +379,39 @@ export class NativeInference implements InferenceBackend {
       audioSeconds: response.duration,
       processingSeconds: response.elapsed,
       language: response.language,
+      spans: response.spans,
+      segmentSpans: response.segmentSpans,
       ...(state.engineVersion !== undefined ? { engineVersion: state.engineVersion } : {}),
       ...(digest !== undefined ? { modelSHA256: digest } : {}),
       ...(hints !== undefined ? { hints } : {}),
     };
+  }
+
+  async findSpeechBoundary(audioPath: string, signal?: AbortSignal) {
+    checkCancellation(signal);
+    await this.verifier.verify(this.configuration.speechModel, this.speechPin, signal);
+    const id = randomUUID();
+    const response = await this.speech.request(
+      { type: "boundary", id, path: audioPath },
+      id,
+      this.configuration.speechTimeout,
+      undefined,
+      signal,
+    );
+    if (
+      response.duration === undefined ||
+      !Number.isFinite(response.duration) ||
+      response.duration < 0.2 ||
+      response.duration > 180 ||
+      (response.boundarySeconds !== undefined &&
+        (!Number.isFinite(response.boundarySeconds) ||
+          response.boundarySeconds < 30 ||
+          response.boundarySeconds > response.duration - 0.1))
+    ) {
+      await this.speech.shutdown();
+      throw new InferenceError("invalidResponse", "Whisper returned an invalid acoustic boundary.");
+    }
+    return response.boundarySeconds;
   }
 
   async correct(

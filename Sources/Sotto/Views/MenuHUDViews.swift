@@ -27,8 +27,16 @@ struct SottoMenuView: View {
             }
             .frame(height: 28)
 
-            SottoMicrophoneTestButton(controller: controller, identifier: "menu.test",
-                idleTitle: "Press \(controller.shortcut == .fn ? "fn" : controller.shortcut.title) to dictate")
+            SottoDictationButton(controller: controller, identifier: "menu.dictate")
+            Text("Hold \(controller.shortcut == .fn ? "fn" : controller.shortcut.title) for a quick take")
+                .font(.caption)
+                .foregroundStyle(SottoPalette.muted)
+                .frame(height: 18)
+            Text(controller.recoveryMessage ?? "")
+                .font(.caption)
+                .foregroundStyle(SottoPalette.muted)
+                .lineLimit(2)
+                .frame(height: 30, alignment: .topLeading)
             Button { controller.copyLastTranscript() } label: {
                 Label("Copy last message", systemImage: "doc.on.doc")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -63,6 +71,7 @@ extension DictationDeliveryStatus {
     var hudSymbol: String {
         switch self {
         case .none: "mic.slash"
+        case .saved: "tray.and.arrow.down"
         case .inserted: "checkmark"
         case .copied: "doc.on.clipboard"
         case .tested: "waveform"
@@ -75,6 +84,7 @@ extension DictationDeliveryStatus {
     var hudLabel: String {
         switch self {
         case .none: "No speech detected"
+        case .saved: "Recording saved"
         case .inserted: "Pasted at your cursor"
         case .copied: "Copied to clipboard"
         case .tested: "Microphone test complete"
@@ -88,7 +98,7 @@ extension DictationDeliveryStatus {
 }
 
 struct DictationHUD: View {
-    static let width: CGFloat = SottoBuild.current.isDevelopment ? 200 : 160
+    static let width: CGFloat = SottoBuild.current.isDevelopment ? 220 : 180
     static let height: CGFloat = 44
     static let noticeHeight: CGFloat = 30
     static let morphDuration = 0.18
@@ -102,7 +112,7 @@ struct DictationHUD: View {
         VStack(spacing: 0) {
             capsule
                 .frame(width: Self.width, height: Self.height)
-            RecordingLimitNote(feedback: controller.recordingFeedback)
+            RecordingTransferNote(feedback: controller.recordingFeedback)
                 .frame(width: Self.width, height: Self.noticeHeight)
         }
         .task(id: presentation.id) { await enter() }
@@ -193,15 +203,15 @@ struct DictationHUD: View {
             }
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(SottoPalette.muted)
-            Button { controller.cancelDictation() } label: {
-                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+            Button { controller.stopDictation() } label: {
+                Image(systemName: "stop.fill").font(.system(size: 10, weight: .semibold))
                     .frame(width: 22, height: 28)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Cancel dictation")
-            .accessibilityLabel("Cancel dictation")
-            .accessibilityIdentifier("hud.cancel")
+            .help("Finish dictation")
+            .accessibilityLabel("Finish dictation")
+            .accessibilityIdentifier("hud.finish")
         }
         .padding(.horizontal, 12)
     }
@@ -245,12 +255,12 @@ struct DictationHUD: View {
 }
 
 /// Observe only the notice's whole-second changes, independently of the meter.
-struct RecordingLimitNote: View {
+struct RecordingTransferNote: View {
     let feedback: RecordingFeedback
-    @State private var notice: RecordingLimitNotice?
+    @State private var notice: RecordingTransferNotice?
 
     var body: some View {
-        Text(notice?.text ?? "Recording limit in 0:30")
+        Text(notice?.text ?? "Saved locally")
             .font(.system(size: 11, weight: .medium))
             .monospacedDigit()
             .lineLimit(1)
@@ -262,7 +272,7 @@ struct RecordingLimitNote: View {
             .opacity(notice == nil ? 0 : 1)
             .accessibilityHidden(notice == nil)
             .accessibilityLabel(notice?.accessibilityLabel ?? "")
-            .accessibilityIdentifier("hud.recording-limit")
-            .onReceive(feedback.$limitNotice.removeDuplicates()) { notice = $0 }
+            .accessibilityIdentifier("hud.transfer-status")
+            .onReceive(feedback.$transferNotice.removeDuplicates()) { notice = $0 }
     }
 }

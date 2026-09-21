@@ -127,7 +127,7 @@ std::variant<Audio, std::string> readAudio(const std::string &path) {
         return "The recording must use PCM16 or float32 WAV samples.";
     }
     if (wav.totalPCMFrameCount < minSamples || wav.totalPCMFrameCount > maxSamples) {
-        return "Record between 0.2 seconds and 3 minutes of audio.";
+        return "A speech-processing window must contain between 0.2 and 180 seconds of audio.";
     }
 
     std::vector<float> samples(static_cast<size_t>(wav.totalPCMFrameCount));
@@ -154,6 +154,17 @@ std::string trim(std::string text) {
     const auto first = text.find_first_not_of(space);
     if (first == std::string::npos) return {};
     return text.substr(first, text.find_last_not_of(space) - first + 1);
+}
+
+bool completeUTF8(const std::string &text) {
+    // BPE tokens may split one Unicode codepoint. Join such pieces before
+    // serializing a span, otherwise JSON's replacement mode corrupts text.
+    try {
+        (void)json(text).dump(-1, ' ', false, json::error_handler_t::strict);
+        return true;
+    } catch (const json::type_error &) {
+        return false;
+    }
 }
 
 struct Progress {
@@ -275,6 +286,11 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
     Progress progress{*id};
     reportProgress(nullptr, nullptr, 0, &progress);
     std::string text;
+    json spans = json::array();
+    json segmentSpans = json::array();
+    bool tokenAlignmentValid = true;
+    double previousStart = 0;
+    double previousEnd = 0;
     std::string detectedLanguage = *language;
     if (!audio.silent) {
         // A small CPU-only Silero pass rejects fan noise, tones, and other
@@ -305,6 +321,9 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
         // passages when vocabulary hints are present. Segment text below still
         // returns plain text, without exposing timestamps to the client.
         parameters.no_timestamps = false;
+        // Token timing is boundary evidence for overlapping bounded windows.
+        // Never carry tokens or decoder state from another recording.
+        parameters.token_timestamps = true;
         parameters.translate = false;
         parameters.print_special = false;
         parameters.print_progress = false;
@@ -333,13 +352,95 @@ void transcribe(whisper_context *context, whisper_vad_context *vad, int threads,
             if (whisper_full_get_segment_no_speech_prob(context, i) > parameters.no_speech_thold) continue;
             // Whisper owns punctuation and word spacing. Only trim the outside.
             text += whisper_full_get_segment_text(context, i);
+            const std::string segmentText = whisper_full_get_segment_text(context, i);
+            if (!segmentText.empty()) {
+                const double segmentStart = std::clamp(whisper_full_get_segment_t0(context, i) / 100.0, 0.0, audio.duration);
+                const double segmentEnd = std::clamp(whisper_full_get_segment_t1(context, i) / 100.0, segmentStart, audio.duration);
+                segmentSpans.push_back({{"text", segmentText}, {"startSeconds", segmentStart}, {"endSeconds", segmentEnd}});
+            }
+            std::string tokenText;
+            std::string pendingPiece;
+            double pendingStart = 0;
+            for (int j = 0; j < whisper_full_n_tokens(context, i); ++j) {
+                const auto token = whisper_full_get_token_data(context, i, j);
+                if (token.id >= whisper_token_eot(context)) continue;
+                const std::string piece = whisper_full_get_token_text(context, i, j);
+                if (piece.empty()) continue;
+                // whisper.cpp estimates times in centiseconds. Clamp only the
+                // final timestamp quantization tick, never arbitrary bad data.
+                const double begin = token.t0 / 100.0;
+                const double finish = std::min(audio.duration, token.t1 / 100.0);
+                if (token.t0 < 0 || token.t1 < token.t0 || begin < previousStart ||
+                    finish < previousEnd || finish < begin || token.t1 / 100.0 > audio.duration + 0.02) {
+                    tokenAlignmentValid = false;
+                }
+                if (pendingPiece.empty()) pendingStart = begin;
+                pendingPiece += piece;
+                if (completeUTF8(pendingPiece)) {
+                    spans.push_back({{"text", pendingPiece}, {"startSeconds", pendingStart}, {"endSeconds", finish}});
+                    pendingPiece.clear();
+                }
+                tokenText += piece;
+                previousStart = begin;
+                previousEnd = finish;
+            }
+            if (!pendingPiece.empty() || tokenText != segmentText) tokenAlignmentValid = false;
         }
     }
+    // Upstream's energy-adjusted word estimates can contract past their start.
+    // Do not fabricate corrected token evidence. Conservative segment envelopes
+    // retain every byte; ambiguous overlap then gets one fresh bounded decode.
+    if (!tokenAlignmentValid) spans = segmentSpans;
     reportProgress(nullptr, nullptr, 100, &progress);
     emit({{"type", "result"}, {"id", *id}, {"text", trim(std::move(text))},
           {"duration", audio.duration}, {"elapsed", std::chrono::duration<double>(Clock::now() - start).count()},
-          {"language", detectedLanguage}, {"includedTerms", hints.included}, {"omittedTerms", hints.omitted},
+          {"language", detectedLanguage}, {"spans", spans}, {"segmentSpans", segmentSpans}, {"includedTerms", hints.included}, {"omittedTerms", hints.omitted},
           {"tokenCount", hints.tokens.size()}, {"tokenBudget", hints.tokenBudget}});
+}
+
+void findBoundary(whisper_vad_context *vad, const json &request) {
+    const auto id = stringField(request, "id");
+    const auto path = stringField(request, "path");
+    if (!id || id->empty() || id->size() > 256 || !path || path->empty() || path->size() > 4096) {
+        emitError("A boundary request needs a valid id and WAV path.", id.value_or(""));
+        return;
+    }
+    auto loaded = readAudio(*path);
+    if (const auto failure = std::get_if<std::string>(&loaded)) {
+        emitError(*failure, *id);
+        return;
+    }
+    const auto &audio = std::get<Audio>(loaded);
+    json response = {{"type", "result"}, {"id", *id}, {"duration", audio.duration}};
+    if (audio.duration < 30 || audio.silent) {
+        emit(response);
+        return;
+    }
+    auto parameters = whisper_vad_default_params();
+    parameters.threshold = 0.5f;
+    parameters.min_speech_duration_ms = 120;
+    parameters.min_silence_duration_ms = 200;
+    parameters.speech_pad_ms = 100;
+    const std::unique_ptr<whisper_vad_segments, decltype(&whisper_vad_free_segments)> segments(
+        whisper_vad_segments_from_samples(vad, parameters, audio.samples.data(), static_cast<int>(audio.samples.size())),
+        whisper_vad_free_segments);
+    if (!segments) {
+        emitError("Acoustic boundary detection failed. The recording remains recoverable.", *id);
+        return;
+    }
+    const int count = whisper_vad_segments_n_segments(segments.get());
+    double lastEnd = 0;
+    for (int i = 0; i <= count; ++i) {
+        const double nextStart = i == count ? audio.duration : whisper_vad_segments_get_segment_t0(segments.get(), i) / 100.0;
+        // Each adjacent speech segment already has 100 ms padding. Require
+        // another 200 ms quiet gap, then keep all samples on both sides of its
+        // midpoint. Noise need not be numerically zero to be nonspeech.
+        const double midpoint = (lastEnd + nextStart) / 2;
+        if (nextStart - lastEnd >= 0.2 && midpoint >= 30 && midpoint <= audio.duration - 0.1)
+            response["boundarySeconds"] = midpoint;
+        if (i < count) lastEnd = whisper_vad_segments_get_segment_t1(segments.get(), i) / 100.0;
+    }
+    emit(response);
 }
 
 } // namespace
@@ -415,6 +516,10 @@ int main(int argc, char **argv) {
         }
         const auto type = stringField(request, "type");
         if (type == "quit") return 0;
+        if (type == "boundary") {
+            findBoundary(vad.get(), request);
+            continue;
+        }
         if (type != "transcribe") {
             emitError("Unknown request type.", stringField(request, "id").value_or(""));
             continue;

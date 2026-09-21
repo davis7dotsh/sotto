@@ -2296,5 +2296,950 @@ extension Components {
                 ])
             }
         }
+        /// - Remark: Generated from `#/components/schemas/RecordingCapabilities`.
+        public struct RecordingCapabilities: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingCapabilities/protocol`.
+            @frozen public enum _ProtocolPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case sotto_recording_v1 = "sotto.recording.v1"
+            }
+            /// - Remark: Generated from `#/components/schemas/RecordingCapabilities/protocol`.
+            public var _protocol: Components.Schemas.RecordingCapabilities._ProtocolPayload
+            /// - Remark: Generated from `#/components/schemas/RecordingCapabilities/maximumPCMBytes`.
+            public var maximumPCMBytes: Swift.Int
+            /// Creates a new `RecordingCapabilities`.
+            ///
+            /// - Parameters:
+            ///   - _protocol:
+            ///   - maximumPCMBytes:
+            public init(
+                _protocol: Components.Schemas.RecordingCapabilities._ProtocolPayload,
+                maximumPCMBytes: Swift.Int
+            ) {
+                self._protocol = _protocol
+                self.maximumPCMBytes = maximumPCMBytes
+            }
+            public enum CodingKeys: String, CodingKey {
+                case _protocol = "protocol"
+                case maximumPCMBytes
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self._protocol = try container.decode(
+                    Components.Schemas.RecordingCapabilities._ProtocolPayload.self,
+                    forKey: ._protocol
+                )
+                self.maximumPCMBytes = try container.decode(
+                    Swift.Int.self,
+                    forKey: .maximumPCMBytes
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "protocol",
+                    "maximumPCMBytes"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RecordingRunEndpoint`.
+        public struct RecordingRunEndpoint: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingRunEndpoint/runID`.
+            public var runID: Components.Schemas.Uuid
+            /// - Remark: Generated from `#/components/schemas/RecordingRunEndpoint/inferenceFrames`.
+            public var inferenceFrames: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingRunEndpoint/originalFrames`.
+            public var originalFrames: Swift.Int?
+            /// Creates a new `RecordingRunEndpoint`.
+            ///
+            /// - Parameters:
+            ///   - runID:
+            ///   - inferenceFrames:
+            ///   - originalFrames:
+            public init(
+                runID: Components.Schemas.Uuid,
+                inferenceFrames: Swift.Int,
+                originalFrames: Swift.Int? = nil
+            ) {
+                self.runID = runID
+                self.inferenceFrames = inferenceFrames
+                self.originalFrames = originalFrames
+            }
+            public enum CodingKeys: String, CodingKey {
+                case runID
+                case inferenceFrames
+                case originalFrames
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self.runID = try container.decode(
+                    Components.Schemas.Uuid.self,
+                    forKey: .runID
+                )
+                self.inferenceFrames = try container.decode(
+                    Swift.Int.self,
+                    forKey: .inferenceFrames
+                )
+                self.originalFrames = try container.decodeIfPresent(
+                    Swift.Int.self,
+                    forKey: .originalFrames
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "runID",
+                    "inferenceFrames",
+                    "originalFrames"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RecordingStreamCheckpoint`.
+        public struct RecordingStreamCheckpoint: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingStreamCheckpoint/runID`.
+            public var runID: Components.Schemas.Uuid
+            /// - Remark: Generated from `#/components/schemas/RecordingStreamCheckpoint/kind`.
+            public var kind: Components.Schemas.AudioKind
+            /// - Remark: Generated from `#/components/schemas/RecordingStreamCheckpoint/format`.
+            public var format: Components.Schemas.AudioStreamFormat
+            /// - Remark: Generated from `#/components/schemas/RecordingStreamCheckpoint/nextSequence`.
+            public var nextSequence: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingStreamCheckpoint/frameCount`.
+            public var frameCount: Swift.Int
+            /// Creates a new `RecordingStreamCheckpoint`.
+            ///
+            /// - Parameters:
+            ///   - runID:
+            ///   - kind:
+            ///   - format:
+            ///   - nextSequence:
+            ///   - frameCount:
+            public init(
+                runID: Components.Schemas.Uuid,
+                kind: Components.Schemas.AudioKind,
+                format: Components.Schemas.AudioStreamFormat,
+                nextSequence: Swift.Int,
+                frameCount: Swift.Int
+            ) {
+                self.runID = runID
+                self.kind = kind
+                self.format = format
+                self.nextSequence = nextSequence
+                self.frameCount = frameCount
+            }
+            public enum CodingKeys: String, CodingKey {
+                case runID
+                case kind
+                case format
+                case nextSequence
+                case frameCount
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self.runID = try container.decode(
+                    Components.Schemas.Uuid.self,
+                    forKey: .runID
+                )
+                self.kind = try container.decode(
+                    Components.Schemas.AudioKind.self,
+                    forKey: .kind
+                )
+                self.format = try container.decode(
+                    Components.Schemas.AudioStreamFormat.self,
+                    forKey: .format
+                )
+                self.nextSequence = try container.decode(
+                    Swift.Int.self,
+                    forKey: .nextSequence
+                )
+                self.frameCount = try container.decode(
+                    Swift.Int.self,
+                    forKey: .frameCount
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "runID",
+                    "kind",
+                    "format",
+                    "nextSequence",
+                    "frameCount"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RecordingSnapshot`.
+        public struct RecordingSnapshot: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/id`.
+            public var id: Components.Schemas.Uuid
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/requestID`.
+            public var requestID: Components.Schemas.Uuid
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/device`.
+            public var device: Components.Schemas.DeviceIdentity
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/mode`.
+            public var mode: Components.Schemas.GenerationMode
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/settings`.
+            public var settings: Components.Schemas.PreferencesSnapshot
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/createdAt`.
+            public var createdAt: Foundation.Date
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/revision`.
+            public var revision: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/captureState`.
+            @frozen public enum CaptureStatePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case recording = "recording"
+                case interrupted = "interrupted"
+                case stopped = "stopped"
+                case discarded = "discarded"
+            }
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/captureState`.
+            public var captureState: Components.Schemas.RecordingSnapshot.CaptureStatePayload
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/processingState`.
+            @frozen public enum ProcessingStatePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case queued = "queued"
+                case processing = "processing"
+                case completed = "completed"
+                case failed = "failed"
+            }
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/processingState`.
+            public var processingState: Components.Schemas.RecordingSnapshot.ProcessingStatePayload
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/uploadedFrames`.
+            public var uploadedFrames: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/transcribedFrames`.
+            public var transcribedFrames: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/proofreadFrames`.
+            public var proofreadFrames: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/streams`.
+            public var streams: [Components.Schemas.RecordingStreamCheckpoint]
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/epoch`.
+            public var epoch: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/stopRuns`.
+            public var stopRuns: [Components.Schemas.RecordingRunEndpoint]?
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/error`.
+            public var error: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/previewText`.
+            public var previewText: Swift.String
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/continuationID`.
+            public var continuationID: Components.Schemas.Uuid?
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/closedRuns`.
+            public var closedRuns: [Components.Schemas.RecordingRunEndpoint]?
+            /// - Remark: Generated from `#/components/schemas/RecordingSnapshot/runTimings`.
+            public var runTimings: [Components.Schemas.RecordingRunTiming]?
+            /// Creates a new `RecordingSnapshot`.
+            ///
+            /// - Parameters:
+            ///   - id:
+            ///   - requestID:
+            ///   - device:
+            ///   - mode:
+            ///   - settings:
+            ///   - createdAt:
+            ///   - revision:
+            ///   - captureState:
+            ///   - processingState:
+            ///   - uploadedFrames:
+            ///   - transcribedFrames:
+            ///   - proofreadFrames:
+            ///   - streams:
+            ///   - epoch:
+            ///   - stopRuns:
+            ///   - error:
+            ///   - previewText:
+            ///   - continuationID:
+            ///   - closedRuns:
+            ///   - runTimings:
+            public init(
+                id: Components.Schemas.Uuid,
+                requestID: Components.Schemas.Uuid,
+                device: Components.Schemas.DeviceIdentity,
+                mode: Components.Schemas.GenerationMode,
+                settings: Components.Schemas.PreferencesSnapshot,
+                createdAt: Foundation.Date,
+                revision: Swift.Int,
+                captureState: Components.Schemas.RecordingSnapshot.CaptureStatePayload,
+                processingState: Components.Schemas.RecordingSnapshot.ProcessingStatePayload,
+                uploadedFrames: Swift.Int,
+                transcribedFrames: Swift.Int,
+                proofreadFrames: Swift.Int,
+                streams: [Components.Schemas.RecordingStreamCheckpoint],
+                epoch: Swift.Int,
+                stopRuns: [Components.Schemas.RecordingRunEndpoint]? = nil,
+                error: Swift.String? = nil,
+                previewText: Swift.String,
+                continuationID: Components.Schemas.Uuid? = nil,
+                closedRuns: [Components.Schemas.RecordingRunEndpoint]? = nil,
+                runTimings: [Components.Schemas.RecordingRunTiming]? = nil
+            ) {
+                self.id = id
+                self.requestID = requestID
+                self.device = device
+                self.mode = mode
+                self.settings = settings
+                self.createdAt = createdAt
+                self.revision = revision
+                self.captureState = captureState
+                self.processingState = processingState
+                self.uploadedFrames = uploadedFrames
+                self.transcribedFrames = transcribedFrames
+                self.proofreadFrames = proofreadFrames
+                self.streams = streams
+                self.epoch = epoch
+                self.stopRuns = stopRuns
+                self.error = error
+                self.previewText = previewText
+                self.continuationID = continuationID
+                self.closedRuns = closedRuns
+                self.runTimings = runTimings
+            }
+            public enum CodingKeys: String, CodingKey {
+                case id
+                case requestID
+                case device
+                case mode
+                case settings
+                case createdAt
+                case revision
+                case captureState
+                case processingState
+                case uploadedFrames
+                case transcribedFrames
+                case proofreadFrames
+                case streams
+                case epoch
+                case stopRuns
+                case error
+                case previewText
+                case continuationID
+                case closedRuns
+                case runTimings
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self.id = try container.decode(
+                    Components.Schemas.Uuid.self,
+                    forKey: .id
+                )
+                self.requestID = try container.decode(
+                    Components.Schemas.Uuid.self,
+                    forKey: .requestID
+                )
+                self.device = try container.decode(
+                    Components.Schemas.DeviceIdentity.self,
+                    forKey: .device
+                )
+                self.mode = try container.decode(
+                    Components.Schemas.GenerationMode.self,
+                    forKey: .mode
+                )
+                self.settings = try container.decode(
+                    Components.Schemas.PreferencesSnapshot.self,
+                    forKey: .settings
+                )
+                self.createdAt = try container.decode(
+                    Foundation.Date.self,
+                    forKey: .createdAt
+                )
+                self.revision = try container.decode(
+                    Swift.Int.self,
+                    forKey: .revision
+                )
+                self.captureState = try container.decode(
+                    Components.Schemas.RecordingSnapshot.CaptureStatePayload.self,
+                    forKey: .captureState
+                )
+                self.processingState = try container.decode(
+                    Components.Schemas.RecordingSnapshot.ProcessingStatePayload.self,
+                    forKey: .processingState
+                )
+                self.uploadedFrames = try container.decode(
+                    Swift.Int.self,
+                    forKey: .uploadedFrames
+                )
+                self.transcribedFrames = try container.decode(
+                    Swift.Int.self,
+                    forKey: .transcribedFrames
+                )
+                self.proofreadFrames = try container.decode(
+                    Swift.Int.self,
+                    forKey: .proofreadFrames
+                )
+                self.streams = try container.decode(
+                    [Components.Schemas.RecordingStreamCheckpoint].self,
+                    forKey: .streams
+                )
+                self.epoch = try container.decode(
+                    Swift.Int.self,
+                    forKey: .epoch
+                )
+                self.stopRuns = try container.decodeIfPresent(
+                    [Components.Schemas.RecordingRunEndpoint].self,
+                    forKey: .stopRuns
+                )
+                self.error = try container.decodeIfPresent(
+                    Swift.String.self,
+                    forKey: .error
+                )
+                self.previewText = try container.decode(
+                    Swift.String.self,
+                    forKey: .previewText
+                )
+                self.continuationID = try container.decodeIfPresent(
+                    Components.Schemas.Uuid.self,
+                    forKey: .continuationID
+                )
+                self.closedRuns = try container.decodeIfPresent(
+                    [Components.Schemas.RecordingRunEndpoint].self,
+                    forKey: .closedRuns
+                )
+                self.runTimings = try container.decodeIfPresent(
+                    [Components.Schemas.RecordingRunTiming].self,
+                    forKey: .runTimings
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "id",
+                    "requestID",
+                    "device",
+                    "mode",
+                    "settings",
+                    "createdAt",
+                    "revision",
+                    "captureState",
+                    "processingState",
+                    "uploadedFrames",
+                    "transcribedFrames",
+                    "proofreadFrames",
+                    "streams",
+                    "epoch",
+                    "stopRuns",
+                    "error",
+                    "previewText",
+                    "continuationID",
+                    "closedRuns",
+                    "runTimings"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RecordingDetail`.
+        public struct RecordingDetail: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingDetail/snapshot`.
+            public var snapshot: Components.Schemas.RecordingSnapshot
+            /// - Remark: Generated from `#/components/schemas/RecordingDetail/result`.
+            public var result: Components.Schemas.GenerationRecord?
+            /// Creates a new `RecordingDetail`.
+            ///
+            /// - Parameters:
+            ///   - snapshot:
+            ///   - result:
+            public init(
+                snapshot: Components.Schemas.RecordingSnapshot,
+                result: Components.Schemas.GenerationRecord? = nil
+            ) {
+                self.snapshot = snapshot
+                self.result = result
+            }
+            public enum CodingKeys: String, CodingKey {
+                case snapshot
+                case result
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self.snapshot = try container.decode(
+                    Components.Schemas.RecordingSnapshot.self,
+                    forKey: .snapshot
+                )
+                self.result = try container.decodeIfPresent(
+                    Components.Schemas.GenerationRecord.self,
+                    forKey: .result
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "snapshot",
+                    "result"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RecordingPage`.
+        public struct RecordingPage: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingPage/items`.
+            public var items: [Components.Schemas.RecordingSnapshot]
+            /// - Remark: Generated from `#/components/schemas/RecordingPage/nextCursor`.
+            public var nextCursor: Swift.String?
+            /// Creates a new `RecordingPage`.
+            ///
+            /// - Parameters:
+            ///   - items:
+            ///   - nextCursor:
+            public init(
+                items: [Components.Schemas.RecordingSnapshot],
+                nextCursor: Swift.String? = nil
+            ) {
+                self.items = items
+                self.nextCursor = nextCursor
+            }
+            public enum CodingKeys: String, CodingKey {
+                case items
+                case nextCursor
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self.items = try container.decode(
+                    [Components.Schemas.RecordingSnapshot].self,
+                    forKey: .items
+                )
+                self.nextCursor = try container.decodeIfPresent(
+                    Swift.String.self,
+                    forKey: .nextCursor
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "items",
+                    "nextCursor"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RecordingAudioHeader`.
+        public struct RecordingAudioHeader: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingAudioHeader/type`.
+            @frozen public enum _TypePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case audio = "audio"
+            }
+            /// - Remark: Generated from `#/components/schemas/RecordingAudioHeader/type`.
+            public var _type: Components.Schemas.RecordingAudioHeader._TypePayload
+            /// - Remark: Generated from `#/components/schemas/RecordingAudioHeader/epoch`.
+            public var epoch: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingAudioHeader/runID`.
+            public var runID: Components.Schemas.Uuid
+            /// - Remark: Generated from `#/components/schemas/RecordingAudioHeader/kind`.
+            public var kind: Components.Schemas.AudioKind
+            /// - Remark: Generated from `#/components/schemas/RecordingAudioHeader/sequence`.
+            public var sequence: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingAudioHeader/firstFrame`.
+            public var firstFrame: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingAudioHeader/format`.
+            public var format: Components.Schemas.AudioStreamFormat
+            /// - Remark: Generated from `#/components/schemas/RecordingAudioHeader/frameCount`.
+            public var frameCount: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingAudioHeader/sha256`.
+            public var sha256: Swift.String
+            /// Creates a new `RecordingAudioHeader`.
+            ///
+            /// - Parameters:
+            ///   - _type:
+            ///   - epoch:
+            ///   - runID:
+            ///   - kind:
+            ///   - sequence:
+            ///   - firstFrame:
+            ///   - format:
+            ///   - frameCount:
+            ///   - sha256:
+            public init(
+                _type: Components.Schemas.RecordingAudioHeader._TypePayload,
+                epoch: Swift.Int,
+                runID: Components.Schemas.Uuid,
+                kind: Components.Schemas.AudioKind,
+                sequence: Swift.Int,
+                firstFrame: Swift.Int,
+                format: Components.Schemas.AudioStreamFormat,
+                frameCount: Swift.Int,
+                sha256: Swift.String
+            ) {
+                self._type = _type
+                self.epoch = epoch
+                self.runID = runID
+                self.kind = kind
+                self.sequence = sequence
+                self.firstFrame = firstFrame
+                self.format = format
+                self.frameCount = frameCount
+                self.sha256 = sha256
+            }
+            public enum CodingKeys: String, CodingKey {
+                case _type = "type"
+                case epoch
+                case runID
+                case kind
+                case sequence
+                case firstFrame
+                case format
+                case frameCount
+                case sha256
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self._type = try container.decode(
+                    Components.Schemas.RecordingAudioHeader._TypePayload.self,
+                    forKey: ._type
+                )
+                self.epoch = try container.decode(
+                    Swift.Int.self,
+                    forKey: .epoch
+                )
+                self.runID = try container.decode(
+                    Components.Schemas.Uuid.self,
+                    forKey: .runID
+                )
+                self.kind = try container.decode(
+                    Components.Schemas.AudioKind.self,
+                    forKey: .kind
+                )
+                self.sequence = try container.decode(
+                    Swift.Int.self,
+                    forKey: .sequence
+                )
+                self.firstFrame = try container.decode(
+                    Swift.Int.self,
+                    forKey: .firstFrame
+                )
+                self.format = try container.decode(
+                    Components.Schemas.AudioStreamFormat.self,
+                    forKey: .format
+                )
+                self.frameCount = try container.decode(
+                    Swift.Int.self,
+                    forKey: .frameCount
+                )
+                self.sha256 = try container.decode(
+                    Swift.String.self,
+                    forKey: .sha256
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "type",
+                    "epoch",
+                    "runID",
+                    "kind",
+                    "sequence",
+                    "firstFrame",
+                    "format",
+                    "frameCount",
+                    "sha256"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RecordingStopRequest`.
+        public struct RecordingStopRequest: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingStopRequest/type`.
+            @frozen public enum _TypePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case stop = "stop"
+            }
+            /// - Remark: Generated from `#/components/schemas/RecordingStopRequest/type`.
+            public var _type: Components.Schemas.RecordingStopRequest._TypePayload
+            /// - Remark: Generated from `#/components/schemas/RecordingStopRequest/epoch`.
+            public var epoch: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingStopRequest/runs`.
+            public var runs: [Components.Schemas.RecordingRunEndpoint]
+            /// - Remark: Generated from `#/components/schemas/RecordingStopRequest/runTimings`.
+            public var runTimings: [Components.Schemas.RecordingRunTiming]?
+            /// Creates a new `RecordingStopRequest`.
+            ///
+            /// - Parameters:
+            ///   - _type:
+            ///   - epoch:
+            ///   - runs:
+            ///   - runTimings:
+            public init(
+                _type: Components.Schemas.RecordingStopRequest._TypePayload,
+                epoch: Swift.Int,
+                runs: [Components.Schemas.RecordingRunEndpoint],
+                runTimings: [Components.Schemas.RecordingRunTiming]? = nil
+            ) {
+                self._type = _type
+                self.epoch = epoch
+                self.runs = runs
+                self.runTimings = runTimings
+            }
+            public enum CodingKeys: String, CodingKey {
+                case _type = "type"
+                case epoch
+                case runs
+                case runTimings
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self._type = try container.decode(
+                    Components.Schemas.RecordingStopRequest._TypePayload.self,
+                    forKey: ._type
+                )
+                self.epoch = try container.decode(
+                    Swift.Int.self,
+                    forKey: .epoch
+                )
+                self.runs = try container.decode(
+                    [Components.Schemas.RecordingRunEndpoint].self,
+                    forKey: .runs
+                )
+                self.runTimings = try container.decodeIfPresent(
+                    [Components.Schemas.RecordingRunTiming].self,
+                    forKey: .runTimings
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "type",
+                    "epoch",
+                    "runs",
+                    "runTimings"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RecordingAck`.
+        public struct RecordingAck: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingAck/type`.
+            @frozen public enum _TypePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case ack = "ack"
+            }
+            /// - Remark: Generated from `#/components/schemas/RecordingAck/type`.
+            public var _type: Components.Schemas.RecordingAck._TypePayload
+            /// - Remark: Generated from `#/components/schemas/RecordingAck/runID`.
+            public var runID: Components.Schemas.Uuid
+            /// - Remark: Generated from `#/components/schemas/RecordingAck/kind`.
+            public var kind: Components.Schemas.AudioKind
+            /// - Remark: Generated from `#/components/schemas/RecordingAck/nextSequence`.
+            public var nextSequence: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingAck/frameCount`.
+            public var frameCount: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingAck/revision`.
+            public var revision: Swift.Int
+            /// Creates a new `RecordingAck`.
+            ///
+            /// - Parameters:
+            ///   - _type:
+            ///   - runID:
+            ///   - kind:
+            ///   - nextSequence:
+            ///   - frameCount:
+            ///   - revision:
+            public init(
+                _type: Components.Schemas.RecordingAck._TypePayload,
+                runID: Components.Schemas.Uuid,
+                kind: Components.Schemas.AudioKind,
+                nextSequence: Swift.Int,
+                frameCount: Swift.Int,
+                revision: Swift.Int
+            ) {
+                self._type = _type
+                self.runID = runID
+                self.kind = kind
+                self.nextSequence = nextSequence
+                self.frameCount = frameCount
+                self.revision = revision
+            }
+            public enum CodingKeys: String, CodingKey {
+                case _type = "type"
+                case runID
+                case kind
+                case nextSequence
+                case frameCount
+                case revision
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self._type = try container.decode(
+                    Components.Schemas.RecordingAck._TypePayload.self,
+                    forKey: ._type
+                )
+                self.runID = try container.decode(
+                    Components.Schemas.Uuid.self,
+                    forKey: .runID
+                )
+                self.kind = try container.decode(
+                    Components.Schemas.AudioKind.self,
+                    forKey: .kind
+                )
+                self.nextSequence = try container.decode(
+                    Swift.Int.self,
+                    forKey: .nextSequence
+                )
+                self.frameCount = try container.decode(
+                    Swift.Int.self,
+                    forKey: .frameCount
+                )
+                self.revision = try container.decode(
+                    Swift.Int.self,
+                    forKey: .revision
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "type",
+                    "runID",
+                    "kind",
+                    "nextSequence",
+                    "frameCount",
+                    "revision"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RecordingContextRequest`.
+        public struct RecordingContextRequest: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingContextRequest/type`.
+            @frozen public enum _TypePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case context = "context"
+            }
+            /// - Remark: Generated from `#/components/schemas/RecordingContextRequest/type`.
+            public var _type: Components.Schemas.RecordingContextRequest._TypePayload
+            /// - Remark: Generated from `#/components/schemas/RecordingContextRequest/epoch`.
+            public var epoch: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingContextRequest/continuationID`.
+            public var continuationID: Components.Schemas.Uuid
+            /// Creates a new `RecordingContextRequest`.
+            ///
+            /// - Parameters:
+            ///   - _type:
+            ///   - epoch:
+            ///   - continuationID:
+            public init(
+                _type: Components.Schemas.RecordingContextRequest._TypePayload,
+                epoch: Swift.Int,
+                continuationID: Components.Schemas.Uuid
+            ) {
+                self._type = _type
+                self.epoch = epoch
+                self.continuationID = continuationID
+            }
+            public enum CodingKeys: String, CodingKey {
+                case _type = "type"
+                case epoch
+                case continuationID
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self._type = try container.decode(
+                    Components.Schemas.RecordingContextRequest._TypePayload.self,
+                    forKey: ._type
+                )
+                self.epoch = try container.decode(
+                    Swift.Int.self,
+                    forKey: .epoch
+                )
+                self.continuationID = try container.decode(
+                    Components.Schemas.Uuid.self,
+                    forKey: .continuationID
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "type",
+                    "epoch",
+                    "continuationID"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RecordingRunTiming`.
+        public struct RecordingRunTiming: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingRunTiming/runID`.
+            public var runID: Components.Schemas.Uuid
+            /// - Remark: Generated from `#/components/schemas/RecordingRunTiming/startedAt`.
+            public var startedAt: Foundation.Date
+            /// - Remark: Generated from `#/components/schemas/RecordingRunTiming/endedAt`.
+            public var endedAt: Foundation.Date?
+            /// - Remark: Generated from `#/components/schemas/RecordingRunTiming/gapBeforeMilliseconds`.
+            public var gapBeforeMilliseconds: Swift.Int?
+            /// Creates a new `RecordingRunTiming`.
+            ///
+            /// - Parameters:
+            ///   - runID:
+            ///   - startedAt:
+            ///   - endedAt:
+            ///   - gapBeforeMilliseconds:
+            public init(
+                runID: Components.Schemas.Uuid,
+                startedAt: Foundation.Date,
+                endedAt: Foundation.Date? = nil,
+                gapBeforeMilliseconds: Swift.Int? = nil
+            ) {
+                self.runID = runID
+                self.startedAt = startedAt
+                self.endedAt = endedAt
+                self.gapBeforeMilliseconds = gapBeforeMilliseconds
+            }
+            public enum CodingKeys: String, CodingKey {
+                case runID
+                case startedAt
+                case endedAt
+                case gapBeforeMilliseconds
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self.runID = try container.decode(
+                    Components.Schemas.Uuid.self,
+                    forKey: .runID
+                )
+                self.startedAt = try container.decode(
+                    Foundation.Date.self,
+                    forKey: .startedAt
+                )
+                self.endedAt = try container.decodeIfPresent(
+                    Foundation.Date.self,
+                    forKey: .endedAt
+                )
+                self.gapBeforeMilliseconds = try container.decodeIfPresent(
+                    Swift.Int.self,
+                    forKey: .gapBeforeMilliseconds
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "runID",
+                    "startedAt",
+                    "endedAt",
+                    "gapBeforeMilliseconds"
+                ])
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/RecordingPauseRequest`.
+        public struct RecordingPauseRequest: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RecordingPauseRequest/type`.
+            @frozen public enum _TypePayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case pause = "pause"
+            }
+            /// - Remark: Generated from `#/components/schemas/RecordingPauseRequest/type`.
+            public var _type: Components.Schemas.RecordingPauseRequest._TypePayload
+            /// - Remark: Generated from `#/components/schemas/RecordingPauseRequest/epoch`.
+            public var epoch: Swift.Int
+            /// - Remark: Generated from `#/components/schemas/RecordingPauseRequest/runs`.
+            public var runs: [Components.Schemas.RecordingRunEndpoint]
+            /// - Remark: Generated from `#/components/schemas/RecordingPauseRequest/runTimings`.
+            public var runTimings: [Components.Schemas.RecordingRunTiming]
+            /// - Remark: Generated from `#/components/schemas/RecordingPauseRequest/interruption`.
+            public var interruption: Swift.String?
+            /// Creates a new `RecordingPauseRequest`.
+            ///
+            /// - Parameters:
+            ///   - _type:
+            ///   - epoch:
+            ///   - runs:
+            ///   - runTimings:
+            ///   - interruption:
+            public init(
+                _type: Components.Schemas.RecordingPauseRequest._TypePayload,
+                epoch: Swift.Int,
+                runs: [Components.Schemas.RecordingRunEndpoint],
+                runTimings: [Components.Schemas.RecordingRunTiming],
+                interruption: Swift.String? = nil
+            ) {
+                self._type = _type
+                self.epoch = epoch
+                self.runs = runs
+                self.runTimings = runTimings
+                self.interruption = interruption
+            }
+            public enum CodingKeys: String, CodingKey {
+                case _type = "type"
+                case epoch
+                case runs
+                case runTimings
+                case interruption
+            }
+            public init(from decoder: any Swift.Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self._type = try container.decode(
+                    Components.Schemas.RecordingPauseRequest._TypePayload.self,
+                    forKey: ._type
+                )
+                self.epoch = try container.decode(
+                    Swift.Int.self,
+                    forKey: .epoch
+                )
+                self.runs = try container.decode(
+                    [Components.Schemas.RecordingRunEndpoint].self,
+                    forKey: .runs
+                )
+                self.runTimings = try container.decode(
+                    [Components.Schemas.RecordingRunTiming].self,
+                    forKey: .runTimings
+                )
+                self.interruption = try container.decodeIfPresent(
+                    Swift.String.self,
+                    forKey: .interruption
+                )
+                try decoder.ensureNoAdditionalProperties(knownKeys: [
+                    "type",
+                    "epoch",
+                    "runs",
+                    "runTimings",
+                    "interruption"
+                ])
+            }
+        }
     }
 }

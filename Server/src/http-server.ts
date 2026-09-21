@@ -10,6 +10,8 @@ import {
 import { ServiceError } from "./errors.ts";
 import type { GenerationService } from "./generation-service.ts";
 import { validateBody } from "./validation.ts";
+import type { RecordingService } from "./recording-service.ts";
+import { registerRecordingRoutes } from "./recording-routes.ts";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const identifier = (value: string) => {
@@ -56,7 +58,11 @@ const artifactName = (value: string) => {
 };
 
 type IDParams = { id: string };
-export function createHTTPServer(service: GenerationService, token?: string) {
+export function createHTTPServer(
+  service: GenerationService,
+  token?: string,
+  recordings?: RecordingService,
+) {
   const app = Fastify({ logger: false, bodyLimit: 262_144 });
   const parseJSON = app.getDefaultJsonParser("error", "error");
   app.removeContentTypeParser("application/json");
@@ -115,6 +121,8 @@ export function createHTTPServer(service: GenerationService, token?: string) {
   app.setNotFoundHandler((_request, reply) =>
     reply.code(404).send({ code: "http_404", message: "Not found." }),
   );
+
+  if (recordings) registerRecordingRoutes(app, recordings);
 
   app.get("/v1/health", () => service.health());
   app.get("/v1/preferences", () => service.getPreferences());

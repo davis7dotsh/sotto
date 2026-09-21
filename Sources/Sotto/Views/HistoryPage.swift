@@ -9,6 +9,7 @@ struct HistoryPage: View {
     @State private var confirmingDelete = false
     @State private var copiedID: UUID?
     @State private var showingWisprFlowImport = false
+    @State private var pendingDiscardID: UUID?
 
     private var devices: [DeviceIdentity] {
         var seen = Set<String>()
@@ -18,7 +19,7 @@ struct HistoryPage: View {
         controller.generations.filter { deviceID == "all" || $0.device.id == deviceID }
     }
     private var selected: GenerationRecord? {
-        filtered.first { $0.id == selectedID }
+        filtered.first { $0.id == selectedID }.flatMap { controller.generationDetail($0.id) }
     }
 
     var body: some View {
@@ -82,6 +83,12 @@ struct HistoryPage: View {
         }
         .padding(26)
         .onAppear { controller.refreshHistory() }
+        .onChange(of: selectedID) { _, id in
+            if let id { controller.loadGenerationDetail(id) }
+        }
+        .onChange(of: selected?.status) { _, status in
+            if status == .completed, let id = selectedID { controller.loadGenerationDetail(id) }
+        }
         .onChange(of: controller.historySourceFilter) { _, _ in
             deviceID = "all"
             selectedID = nil
@@ -101,10 +108,52 @@ struct HistoryPage: View {
         } message: {
             Text("Its archived text and files will be removed from every device’s history.")
         }
+        .confirmationDialog("Discard this saved recording?", isPresented: Binding(
+            get: { pendingDiscardID != nil }, set: { if !$0 { pendingDiscardID = nil } }
+        )) {
+            if let id = pendingDiscardID {
+                Button("Discard recording", role: .destructive) { controller.discardPendingRecording(id) }
+            }
+            Button("Cancel", role: .cancel) { pendingDiscardID = nil }
+        }
     }
 
     private var historyList: some View {
         List(selection: $selectedID) {
+            if !controller.pendingRecordings.isEmpty {
+                Section("Saved on this Mac") {
+                    ForEach(controller.pendingRecordings) { recording in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(recording.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
+                                    .font(.caption)
+                                Spacer()
+                                Button { pendingDiscardID = recording.id } label: { Image(systemName: "trash") }
+                                    .buttonStyle(.borderless)
+                                    .help("Discard saved recording")
+                                    .accessibilityLabel("Discard saved recording")
+                            }
+                            HStack {
+                                Text(controller.pendingRecordingIsPaused(recording.id) ? "Recording paused" : "Awaiting processing")
+                                Spacer()
+                                Text(sottoDuration(controller.pendingRecordingAudioSeconds(recording.id))).monospacedDigit()
+                            }
+                            .font(.callout)
+                            HStack {
+                                Button("Resume") { controller.resumePendingRecording(recording.id) }
+                                    .disabled(!controller.canResumePendingRecording(recording.id))
+                                Button("Finish") { controller.finishPendingRecording(recording.id) }
+                                    .disabled(!controller.canFinishPendingRecording(recording.id))
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    Button("Retry synchronization", action: controller.retryPendingRecordings)
+                        .buttonStyle(.borderless)
+                        .disabled(controller.isBusy)
+                }
+            }
             ForEach(filtered) { generation in
                 VStack(alignment: .leading, spacing: 7) {
                     HStack {
@@ -134,7 +183,7 @@ struct HistoryPage: View {
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
         .overlay {
-            if filtered.isEmpty {
+            if filtered.isEmpty && controller.pendingRecordings.isEmpty {
                 ContentUnavailableView("No dictations", systemImage: "waveform",
                                        description: Text("Record while connected to add a dictation."))
             }
@@ -152,7 +201,7 @@ struct HistoryPage: View {
                         NSPasteboard.general.clearContents()
                         if NSPasteboard.general.setString(selected.finalText, forType: .string) { copiedID = selected.id }
                     } label: { Image(systemName: copiedID == selected.id ? "checkmark" : "doc.on.doc") }
-                        .disabled(selected.finalText.isEmpty)
+                        .disabled(selected.finalText.isEmpty || controller.loadingGenerationDetails.contains(selected.id))
                         .help("Copy transcript")
                         .accessibilityLabel("Copy transcript")
                     Button { confirmingDelete = true } label: { Image(systemName: "trash") }
@@ -168,6 +217,8 @@ struct HistoryPage: View {
                         Text("Flow status: \(sourceStatus)")
                     }
                     if selected.audioSeconds > 0 { Text(sottoDuration(selected.audioSeconds)).monospacedDigit() }
+                    let gapSeconds = controller.recordingGapSeconds(selected.id)
+                    if gapSeconds > 0 { Text("\(sottoDuration(gapSeconds)) paused").monospacedDigit() }
                 }
                 .font(.caption)
                 .foregroundStyle(SottoPalette.muted)
@@ -177,7 +228,12 @@ struct HistoryPage: View {
                         if let error = selected.error {
                             Text(error).foregroundStyle(SottoPalette.warning)
                         }
-                        Text(selected.finalText.isEmpty ? "No transcript available." : selected.finalText)
+                        if controller.loadingGenerationDetails.contains(selected.id) {
+                            ProgressView("Loading transcript…").controlSize(.small)
+                        }
+                        Text(selected.status == .completed
+                            ? (selected.finalText.isEmpty ? "No transcript available." : selected.finalText)
+                            : (selected.previewText.isEmpty ? "Processing saved audio…" : selected.previewText))
                             .font(.body)
                             .lineSpacing(4)
                             .textSelection(.enabled)
@@ -228,7 +284,16 @@ struct HistoryPage: View {
                             controller.openGenerationAudio(selected, kind: .inference)
                         }
                     }
-                    if selected.originalAudio != nil {
+                    let originalRuns = controller.originalRecordingRuns(selected.id)
+                    if originalRuns.count > 1 {
+                        Menu("Open original") {
+                            ForEach(Array(originalRuns.enumerated()), id: \.element.runID) { index, run in
+                                Button("Run \(index + 1) · \(run.format.sampleRate) Hz · \(run.format.channels) ch") {
+                                    controller.openGenerationAudio(selected, kind: .original, runID: run.runID)
+                                }
+                            }
+                        }
+                    } else if selected.originalAudio != nil || !originalRuns.isEmpty {
                         Button("Open original") {
                             controller.errorMessage = nil
                             controller.openGenerationAudio(selected, kind: .original)
@@ -253,7 +318,7 @@ struct HistoryPage: View {
                     Spacer()
                 }
                 .frame(height: 28)
-                .disabled(controller.serverHealth == nil)
+                .disabled(controller.serverHealth == nil || selected.status != .completed)
                 if let speech = selected.speech {
                     Text("\(speech.modelID) · \(speech.backend)")
                         .font(.caption2)
@@ -287,6 +352,7 @@ struct HistoryPage: View {
     }
 
     private func summary(_ generation: GenerationRecord) -> String {
+        if !generation.previewText.isEmpty { return generation.previewText }
         if !generation.finalText.isEmpty { return generation.finalText }
         return generation.importedSource == nil ? statusLabel(generation.status) : "No transcript recovered"
     }
