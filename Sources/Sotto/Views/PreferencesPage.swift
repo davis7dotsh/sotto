@@ -45,15 +45,18 @@ private struct DevicePreferencesForm: View {
             Section {
                 HStack {
                     if keyRecorder.isRecording {
-                        Button("Cancel", role: .cancel) { keyRecorder.stop() }
-                            .frame(width: 125)
-                            .accessibilityIdentifier("preferences.shortcut-cancel")
+                        Button("Cancel", role: .cancel) {
+                            keyRecorder.stop()
+                            controller.setKeyRecording(false)
+                        }
+                        .frame(width: 125)
+                        .accessibilityIdentifier("preferences.shortcut-cancel")
                     } else {
-                    Button {
-                        controller.stopShortcutCheck()
-                        keyRecorderMessage = nil
-                        keyRecorder.start()
-                    } label: {
+                        Button {
+                            keyRecorderMessage = nil
+                            controller.setKeyRecording(true)
+                            keyRecorder.start()
+                        } label: {
                             Label(controller.shortcut.title, systemImage: "record.circle")
                         }
                         .frame(width: 125)
@@ -131,8 +134,20 @@ private struct DevicePreferencesForm: View {
             token = preferences.token
             deviceName = preferences.deviceName
             controller.refreshPermissions()
-            keyRecorder.onCapture = { controller.shortcut = $0 }
-            keyRecorder.onTimeout = { keyRecorderMessage = "Timed out. Click Record and press a key." }
+            keyRecorder.onCapture = {
+                controller.setKeyRecording(false)
+                controller.shortcut = $0
+            }
+            keyRecorder.onTimeout = {
+                controller.setKeyRecording(false)
+                keyRecorderMessage = "Timed out. Click Record and press a key."
+            }
+        }
+        .onDisappear {
+            if keyRecorder.isRecording {
+                keyRecorder.stop()
+                controller.setKeyRecording(false)
+            }
         }
     }
 }

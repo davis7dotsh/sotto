@@ -1058,11 +1058,27 @@ final class SottoController: ObservableObject {
         let current = PermissionSnapshot.capture()
         if current != permissions { permissions = current }
         audioDevices.refresh()
-        if permissions.canListenForHotkey {
+        if permissions.canListenForHotkey, !hotkeySuspendedForKeyRecording {
             isHotkeyActive = hotkey.start()
         } else {
             hotkey.stop()
             isHotkeyActive = false
+        }
+    }
+
+    /// While the user records a new hold key, the live monitor must not turn
+    /// that same press into dictation. Suspended until recording stops.
+    private var hotkeySuspendedForKeyRecording = false
+
+    func setKeyRecording(_ recording: Bool) {
+        guard hotkeySuspendedForKeyRecording != recording else { return }
+        hotkeySuspendedForKeyRecording = recording
+        if recording {
+            stopShortcutCheck()
+            hotkey.stop()
+            isHotkeyActive = false
+        } else {
+            refreshPermissions()
         }
     }
 

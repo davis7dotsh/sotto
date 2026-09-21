@@ -1,19 +1,25 @@
 import AppKit
 
 /// Lets the user choose a hold key by pressing it instead of picking from a
-/// list. While recording, a local event monitor watches flagsChanged events;
-/// Sotto is frontmost, so the pressed modifier belongs to the user's intent.
+/// list. While recording, a local event monitor watches the supported
+/// modifiers; Sotto is frontmost, so the pressed key belongs to the user's
+/// intent. Only key-down edges capture: a modifier that was already held when
+/// recording started selects nothing when it is later released.
 @MainActor
 final class HoldKeyRecorder: ObservableObject {
     struct Environment {
-        var listen: (@escaping (HoldKey) -> Void) -> HotkeyCancellation
+        var listen: (@escaping (HoldKey, Bool) -> Void) -> HotkeyCancellation
         var delay: (@escaping @MainActor () -> Void) -> HotkeyCancellation
 
         static var live: Self {
             Self(
                 listen: { handler in
-                    let monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
-                        if let key = HoldKey(keyCode: event.keyCode) { handler(key) }
+                    let monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { event in
+                        guard let cgEvent = event.cgEvent, let key = HoldKey(keyCode: event.keyCode) else { return event }
+                        // Some keyboards report Fn/Globe as keyDown instead of
+                        // flagsChanged; a keyDown for a modifier is always a press.
+                        let isDown = event.type == .keyDown || key.isDown(in: cgEvent.flags)
+                        handler(key, isDown)
                         return event
                     }
                     return HotkeyCancellation { if let monitor { NSEvent.removeMonitor(monitor) } }
@@ -47,7 +53,7 @@ final class HoldKeyRecorder: ObservableObject {
     func start() {
         guard !isRecording else { return }
         isRecording = true
-        listener = environment.listen { [weak self] in self?.receive($0) }
+        listener = environment.listen { [weak self] in self?.receive($0, down: $1) }
         timeout = environment.delay { [weak self] in self?.timeOut() }
     }
 
@@ -60,8 +66,8 @@ final class HoldKeyRecorder: ObservableObject {
         timeout = nil
     }
 
-    func receive(_ key: HoldKey) {
-        guard isRecording else { return }
+    func receive(_ key: HoldKey, down: Bool) {
+        guard isRecording, down else { return }
         stop()
         onCapture?(key)
     }

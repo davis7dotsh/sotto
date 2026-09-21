@@ -14,7 +14,7 @@ private final class ScheduledRecorderCall {
 
 @MainActor
 private final class RecorderFixture {
-    var listener: (@MainActor (HoldKey) -> Void)?
+    var listener: (@MainActor (HoldKey, Bool) -> Void)?
     var delays: [ScheduledRecorderCall] = []
     var captured: [HoldKey] = []
     var timedOut = 0
@@ -35,7 +35,8 @@ private final class RecorderFixture {
         return recorder
     }()
 
-    func press(_ key: HoldKey) { listener?(key) }
+    func press(_ key: HoldKey) { listener?(key, true) }
+    func release(_ key: HoldKey) { listener?(key, false) }
     func fireTimeout() { delays.first { !$0.cancelled }?.fire() }
 }
 
@@ -58,6 +59,17 @@ final class HoldKeyRecorderTests: XCTestCase {
         XCTAssertFalse(fixture.recorder.isRecording)
         fixture.press(.fn)
         XCTAssertEqual(fixture.captured, [.rightControl], "A stopped recorder must not capture again")
+    }
+
+    func testModifierReleaseDoesNotCapture() {
+        let fixture = RecorderFixture()
+        fixture.recorder.start()
+        // A key held before recording started reports only its release edge.
+        fixture.release(.rightOption)
+        XCTAssertEqual(fixture.captured, [])
+        XCTAssertTrue(fixture.recorder.isRecording)
+        fixture.press(.rightOption)
+        XCTAssertEqual(fixture.captured, [.rightOption], "A later real press still captures")
     }
 
     func testTimeoutStopsRecordingWithoutCapture() {
