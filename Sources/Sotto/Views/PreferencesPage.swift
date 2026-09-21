@@ -13,6 +13,8 @@ struct DevicePreferencesPage: View {
 private struct DevicePreferencesForm: View {
     @ObservedObject var controller: SottoController
     @ObservedObject var preferences: ClientPreferencesStore
+    @StateObject private var keyRecorder = HoldKeyRecorder()
+    @State private var keyRecorderMessage: String?
     @State private var endpoint = ""
     @State private var token = ""
     @State private var deviceName = ""
@@ -41,10 +43,30 @@ private struct DevicePreferencesForm: View {
             } header: { Text("Connection").textCase(nil) }
 
             Section {
-                Picker("Hold to dictate", selection: $controller.shortcut) {
-                    ForEach(HoldKey.allCases) { key in Text(key.title).tag(key) }
+                HStack {
+                    if keyRecorder.isRecording {
+                        Button("Cancel", role: .cancel) { keyRecorder.stop() }
+                            .frame(width: 125)
+                            .accessibilityIdentifier("preferences.shortcut-cancel")
+                    } else {
+                    Button {
+                        controller.stopShortcutCheck()
+                        keyRecorderMessage = nil
+                        keyRecorder.start()
+                    } label: {
+                            Label(controller.shortcut.title, systemImage: "record.circle")
+                        }
+                        .frame(width: 125)
+                        .accessibilityIdentifier("preferences.shortcut")
+                        .accessibilityLabel("Record hold key. Currently \(controller.shortcut.title).")
+                    }
+                    Text(keyRecorder.isRecording
+                         ? "Press the key you want to hold to dictate."
+                         : "Click, then press \(HoldKey.allCases.map(\.title).joined(separator: ", ")).")
+                        .font(.caption)
+                        .foregroundStyle(SottoPalette.muted)
                 }
-                .accessibilityIdentifier("preferences.shortcut")
+                if let keyRecorderMessage { Text(keyRecorderMessage).font(.caption).foregroundStyle(SottoPalette.warning) }
                 LabeledContent {
                     Button(controller.isCheckingShortcut ? "Stop checking" : "Check shortcut") {
                         if controller.isCheckingShortcut { controller.stopShortcutCheck() }
@@ -109,6 +131,8 @@ private struct DevicePreferencesForm: View {
             token = preferences.token
             deviceName = preferences.deviceName
             controller.refreshPermissions()
+            keyRecorder.onCapture = { controller.shortcut = $0 }
+            keyRecorder.onTimeout = { keyRecorderMessage = "Timed out. Click Record and press a key." }
         }
     }
 }
