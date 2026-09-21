@@ -145,7 +145,8 @@ final class SottoController: ObservableObject {
 
     private let recorder = AudioRecorder()
     private let audioDevices = AudioDeviceStore()
-    private let hotkey = HotkeyMonitor()
+    private let hotkey: HotkeyMonitor
+    private let permissionCapture: () -> PermissionSnapshot
     private let inserter = TextInserter()
     private var subscriptions: Set<AnyCancellable> = []
     private var applyingConfiguration = false
@@ -184,14 +185,20 @@ final class SottoController: ObservableObject {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var lockObserver: NSObjectProtocol?
 
-    init(configuration: ConfigurationStore, startServices: Bool = true) {
+    /// Injectable for tests: a fixture hotkey and permission capture let the
+    /// suspension contract be exercised without real event taps or prompts.
+    init(configuration: ConfigurationStore, startServices: Bool = true,
+         hotkey: HotkeyMonitor? = nil,
+         permissionCapture: @escaping () -> PermissionSnapshot = PermissionSnapshot.capture) {
         self.configuration = configuration
+        self.hotkey = hotkey ?? HotkeyMonitor()
+        self.permissionCapture = permissionCapture
         preferences = ClientPreferencesStore(root: configuration.url.deletingLastPathComponent())
         microphones = MicrophonePreferencesStore(configuration: configuration)
-        permissions = startServices ? PermissionSnapshot.capture()
+        permissions = startServices ? permissionCapture()
             : PermissionSnapshot(microphone: false, accessibility: false, inputMonitoring: false)
         applyConfiguration(configuration.configuration)
-        hotkey.key = shortcut
+        self.hotkey.key = shortcut
         microphones.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &subscriptions)
         preferences.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &subscriptions)
         configuration.$configuration.removeDuplicates().sink { [weak self] in self?.applyConfiguration($0) }.store(in: &subscriptions)
@@ -1055,7 +1062,7 @@ final class SottoController: ObservableObject {
         continuationAnchors.removeAll()
     }
     func refreshPermissions() {
-        let current = PermissionSnapshot.capture()
+        let current = permissionCapture()
         if current != permissions { permissions = current }
         audioDevices.refresh()
         if permissions.canListenForHotkey, !hotkeySuspendedForKeyRecording {
