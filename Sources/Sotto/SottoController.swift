@@ -137,7 +137,7 @@ final class SottoController: ObservableObject {
     var isBusy: Bool { activity.isBusy }
     var canCancelWithEscape: Bool { !hotkey.isHoldingFn }
     var isServerReady: Bool { serverHealth?.ready == true && serverHealth?.apiVersion == SottoAPI.version }
-    var canTest: Bool { isServerReady && permissions.microphone && microphones.resolution.device != nil && !isBusy }
+    var canTest: Bool { isServerReady && permissions.microphone && microphones.resolution.device != nil && !isBusy && !isRecordingKey }
     var selectedInputName: String { microphones.resolution.device?.name ?? "No microphone available" }
     var allPermissionsGranted: Bool { permissions.microphone && permissions.accessibility }
     var onHUDVisibility: ((Bool) -> Void)?
@@ -649,7 +649,7 @@ final class SottoController: ObservableObject {
     }
 
     func toggleTestRecording() {
-        guard !hotkey.isHoldingFn else { return }
+        guard !hotkey.isHoldingFn, !isRecordingKey else { return }
         if isCapturing { finishDictation() }
         else if !isBusy { beginDictation(isTest: true) }
     }
@@ -776,7 +776,7 @@ final class SottoController: ObservableObject {
     }
 
     private func beginDictation(isTest: Bool) {
-        guard !isBusy, !isShuttingDown else { return }
+        guard !isBusy, !isShuttingDown, !isRecordingKey else { return }
         stopShortcutCheck()
         guard isServerReady else { showError(serverStatusMessage); refreshServer(); onShowWindow?(); return }
         guard permissions.microphone else { showError("Allow microphone access, then try again."); onShowWindow?(); return }
@@ -1068,11 +1068,16 @@ final class SottoController: ObservableObject {
 
     /// While the user records a new hold key, the live monitor must not turn
     /// that same press into dictation. Suspended until recording stops.
+    ///
+    /// Published so other capture entry points (the microphone test button,
+    /// the hold monitor itself) stay disabled while capture is active.
+    @Published private(set) var isRecordingKey = false
     private var hotkeySuspendedForKeyRecording = false
 
     func setKeyRecording(_ recording: Bool) {
         guard hotkeySuspendedForKeyRecording != recording else { return }
         hotkeySuspendedForKeyRecording = recording
+        isRecordingKey = recording
         if recording {
             stopShortcutCheck()
             hotkey.stop()

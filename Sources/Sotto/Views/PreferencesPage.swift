@@ -76,6 +76,9 @@ private struct DevicePreferencesForm: View {
                         else { controller.startShortcutCheck(); showingDiagnostics = true }
                     }
                     .frame(width: 125)
+                    // The hold monitor is suspended during key recording; a
+                    // shortcut check against it would only produce silence.
+                    .disabled(keyRecorder.isRecording)
                 } label: {
                     Text(controller.isCheckingShortcut ? "Hold the key for a second" : "Shortcut check")
                 }

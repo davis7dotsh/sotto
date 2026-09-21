@@ -7,6 +7,9 @@ import AppKit
 /// recording started selects nothing when it is later released.
 @MainActor
 final class HoldKeyRecorder: ObservableObject {
+    /// Recording stops itself after this long without a usable press.
+    static let timeoutNanoseconds: UInt64 = 5_000_000_000
+
     struct Environment {
         var listen: (@escaping (HoldKey, Bool) -> Void) -> HotkeyCancellation
         var delay: (@escaping @MainActor () -> Void) -> HotkeyCancellation
@@ -26,7 +29,7 @@ final class HoldKeyRecorder: ObservableObject {
                 },
                 delay: { action in
                     let task = Task { @MainActor in
-                        do { try await Task.sleep(nanoseconds: 5_000_000_000) }
+                        do { try await Task.sleep(nanoseconds: HoldKeyRecorder.timeoutNanoseconds) }
                         catch { return }
                         guard !Task.isCancelled else { return }
                         action()
@@ -75,17 +78,5 @@ final class HoldKeyRecorder: ObservableObject {
     private func timeOut() {
         stop()
         onTimeout?()
-    }
-}
-
-extension HoldKey {
-    /// The flag-changed key codes monitored for dictation holds.
-    init?(keyCode: CGKeyCode) {
-        switch keyCode {
-        case HoldKey.rightOption.keyCode: self = .rightOption
-        case HoldKey.rightControl.keyCode: self = .rightControl
-        case HoldKey.fn.keyCode: self = .fn
-        default: return nil
-        }
     }
 }
