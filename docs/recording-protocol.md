@@ -91,7 +91,18 @@ Resource bounds apply to individual transfers:
 - JSON control message, in either direction: at most 2,097,152 bytes.
 - Complete binary message: at most 1,064,964 bytes.
 - Combined queued/in-flight audio: at most four complete maximum messages.
-- Server JSON messages: at most 2,097,152 bytes, allowing accepted settings in snapshots.
+
+Durable metadata reserves a separate cumulative budget. Closed endpoints,
+their eventual final-stop copy, and capture timings together fit within 1 MiB.
+Active runs reserve their later closed endpoint and timing before audio is
+acknowledged.
+Before accepting changes, the server also checks the complete prospective final
+snapshot against the 2 MiB wire budget with 64 KiB reserved for progress metadata.
+This lets an accepted pause remain finishable without producing an oversized
+reconciliation response. Unsupported metadata growth rejects before acceptance;
+the acknowledged audio and previous checkpoints remain available. The on-disk
+manifest allows a further 2 MiB for internal speech/text checkpoints, for a total
+4 MiB bound. These limits bound metadata rather than recording duration.
 
 The WebSocket payload limit is enforced before decoding. Receive queues and
 outbound buffers are independently bounded. A rejected transfer never grants

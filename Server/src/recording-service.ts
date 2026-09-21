@@ -53,7 +53,11 @@ import {
 
 const MAX_CHUNK_BYTES = 1_048_576;
 const WINDOW_FRAMES = 16_000 * 45;
-const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+// Half the wire budget belongs to cumulative lifecycle data, including its
+// eventual stop copy. The rest holds settings, streams and progress metadata.
+const MAX_LIFECYCLE_BYTES = MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES / 2;
+const SNAPSHOT_HEADROOM_BYTES = 64 * 1024;
+const MAX_MANIFEST_BYTES = MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES + 2 * 1024 * 1024;
 const uuid = () => randomUUID().toUpperCase();
 const date = () => new Date().toISOString();
 const copy = <T>(value: T): T => structuredClone(value);
@@ -272,6 +276,8 @@ export class RecordingService {
     return manifest;
   }
   private async commit(manifest: Manifest) {
+    manifest.snapshot.revision++;
+    this.assertMetadataBudget(manifest);
     const data = JSON.stringify(manifest);
     if (Buffer.byteLength(data) > MAX_MANIFEST_BYTES)
       throw failure(
@@ -279,17 +285,69 @@ export class RecordingService {
         "Recording checkpoint exceeded its bounded storage budget.",
         413,
       );
-    manifest.snapshot.revision++;
-    await atomicPrivateWrite(
-      join(this.directory(manifest.snapshot.id), "manifest.json"),
-      JSON.stringify(manifest),
-    );
+    await atomicPrivateWrite(join(this.directory(manifest.snapshot.id), "manifest.json"), data);
     this.sessions.set(manifest.snapshot.id, copy(manifest));
     for (const callback of this.subscribers.get(manifest.snapshot.id) ?? []) {
       try {
         callback(copy(manifest.snapshot));
       } catch {}
     }
+  }
+  private assertMetadataBudget(manifest: Manifest) {
+    const snapshot = manifest.snapshot;
+    const closed = new Map((snapshot.closedRuns ?? []).map((run) => [run.runID, run]));
+    const endpoints = new Map(closed);
+    if (!snapshot.stopRuns) {
+      for (const stream of snapshot.streams) {
+        if (closed.has(stream.runID)) continue;
+        const run = endpoints.get(stream.runID) ?? { runID: stream.runID, inferenceFrames: 0 };
+        if (stream.kind === "inference") run.inferenceFrames = Number.MAX_SAFE_INTEGER;
+        else run.originalFrames = Number.MAX_SAFE_INTEGER;
+        endpoints.set(stream.runID, run);
+      }
+    }
+    const stopRuns = snapshot.stopRuns ?? [...endpoints.values()];
+    const existingTimings = new Map(
+      (snapshot.runTimings ?? []).map((timing) => [timing.runID, timing]),
+    );
+    const runTimings = stopRuns.map(
+      (run) =>
+        existingTimings.get(run.runID) ?? {
+          runID: run.runID,
+          startedAt: "9999-12-31T23:59:59.999999999+00:00",
+          endedAt: "9999-12-31T23:59:59.999999999+00:00",
+          gapBeforeMilliseconds: Number.MAX_SAFE_INTEGER,
+        },
+    );
+    // An active run still needs a closed endpoint copy and timing when capture
+    // pauses. Reserve both before acknowledging its first audio bytes.
+    const lifecycle = { closedRuns: stopRuns, stopRuns, runTimings };
+    const prospective = {
+      type: "snapshot",
+      snapshot: {
+        ...snapshot,
+        ...lifecycle,
+        streams: snapshot.streams.map((stream) => ({
+          ...stream,
+          nextSequence: Number.MAX_SAFE_INTEGER,
+          frameCount: Number.MAX_SAFE_INTEGER,
+        })),
+      },
+    };
+    if (
+      Buffer.byteLength(JSON.stringify(lifecycle)) > MAX_LIFECYCLE_BYTES ||
+      Buffer.byteLength(JSON.stringify(prospective)) >
+        MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES - SNAPSHOT_HEADROOM_BYTES
+    )
+      throw failure(
+        "metadata_too_large",
+        "Recording metadata must leave room for its final stop and recoverable snapshot.",
+        413,
+      );
+  }
+  private assertControlBudget(control: unknown) {
+    if (Buffer.byteLength(JSON.stringify(control)) > MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES)
+      throw failure("control_too_large", "Recording control exceeds the two MiB wire budget.", 413);
   }
   private uploaded(manifest: Manifest) {
     return manifest.snapshot.streams
@@ -726,6 +784,7 @@ export class RecordingService {
   ) {
     return this.mutate(async () => {
       this.assertRunning();
+      this.assertControlBudget({ type: "pause", epoch, runs, runTimings, interruption });
       const manifest = copy(this.lookup(id));
       this.assertEpoch(manifest, epoch);
       if (manifest.snapshot.stopRuns || manifest.snapshot.processingState === "completed")
@@ -780,6 +839,7 @@ export class RecordingService {
   stop(id: string, epoch: number, runs: RecordingRunEndpoint[], runTimings?: RecordingRunTiming[]) {
     return this.mutate(async () => {
       this.assertRunning();
+      this.assertControlBudget({ type: "stop", epoch, runs, runTimings });
       const manifest = copy(this.lookup(id));
       this.assertEpoch(manifest, epoch);
       const totals = this.normalizeEndpoints(manifest, runs);

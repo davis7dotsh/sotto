@@ -7,7 +7,11 @@ import { RecordingService } from "../src/recording-service.ts";
 import { defaultPreferences } from "../src/generation-service.ts";
 import { sha256 } from "../src/storage.ts";
 import { FakeInference } from "./support.ts";
-import type { RecordingAudioHeader, RecordingSnapshot } from "../src/recording-contract.ts";
+import {
+  MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES,
+  type RecordingAudioHeader,
+  type RecordingSnapshot,
+} from "../src/recording-contract.ts";
 
 class CountingInference extends FakeInference {
   windows: number[] = [];
@@ -729,4 +733,126 @@ test("shutdown fences late upload and recording controls before they can mutate 
   await expect(
     readFile(join(path, "sessions", snapshot.id, runID.toUpperCase(), "inference", "1.json")),
   ).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("near-budget pause reserves its final stop snapshot and survives finalization and restart", async () => {
+  const { service, path, hooks } = await setup();
+  const snapshot = await service.resume((await service.create(request())).id);
+  const run = (index: number) => ({
+    runID: `${index.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`.toUpperCase(),
+    inferenceFrames: index === 0 ? 16_000 : 0,
+  });
+  const timing = (index: number) => ({
+    runID: run(index).runID,
+    startedAt: "2026-09-21T10:00:00.000Z",
+    endedAt: index === 0 ? "2026-09-21T10:00:01.000Z" : "2026-09-21T10:00:00.000Z",
+    gapBeforeMilliseconds: 0,
+  });
+  const lifecycleBudget = MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES / 2;
+  const overhead = Buffer.byteLength(
+    JSON.stringify({ closedRuns: [], stopRuns: [], runTimings: [] }),
+  );
+  const bytesPerRun =
+    2 * (Buffer.byteLength(JSON.stringify(run(1))) + 1) +
+    Buffer.byteLength(JSON.stringify(timing(1))) +
+    1;
+  const count = Math.floor((lifecycleBudget - overhead - 8 + 3) / bytesPerRun) - 1;
+  const runs = Array.from({ length: count }, (_, index) => run(index));
+  const runTimings = runs.map((_, index) => timing(index));
+  runs[count - 1]!.inferenceFrames = 16_000;
+  runTimings[count - 1]!.endedAt = "2026-09-21T10:00:01.000Z";
+  const size = Buffer.byteLength(JSON.stringify({ closedRuns: runs, stopRuns: runs, runTimings }));
+  expect(size).toBeLessThanOrEqual(lifecycleBudget);
+  expect(lifecycleBudget - size).toBeLessThan(2 * bytesPerRun);
+  const pcm = Buffer.alloc(64_000);
+  await service.appendAudio(snapshot.id, header(snapshot, runs[0]!.runID, 0, 0, pcm), pcm);
+  await service.pause(snapshot.id, snapshot.epoch, runs.slice(0, -1), runTimings.slice(0, -1));
+  // The next active run's endpoint copy and timing were budgeted at its ACK.
+  await service.appendAudio(snapshot.id, header(snapshot, runs[count - 1]!.runID, 0, 0, pcm), pcm);
+  const paused = await service.pause(snapshot.id, snapshot.epoch, runs, runTimings);
+  expect(paused.closedRuns).toHaveLength(count);
+  expect(Buffer.byteLength(JSON.stringify({ type: "snapshot", snapshot: paused }))).toBeLessThan(
+    MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES,
+  );
+  const accepted = await readFile(join(path, "sessions", snapshot.id, "manifest.json"), "utf8");
+  const extraRuns = [...runs, run(count), run(count + 1)];
+  const extraTimings = [...runTimings, timing(count), timing(count + 1)];
+  await expect(
+    service.pause(snapshot.id, snapshot.epoch, extraRuns, extraTimings),
+  ).rejects.toMatchObject({ code: "metadata_too_large", status: 413 });
+  await expect(
+    service.stop(snapshot.id, snapshot.epoch, extraRuns, extraTimings),
+  ).rejects.toMatchObject({ code: "metadata_too_large", status: 413 });
+  expect((await service.get(snapshot.id)).closedRuns).toEqual(paused.closedRuns);
+  expect((await service.get(snapshot.id)).stopRuns).toBeUndefined();
+  // A worker may checkpoint the accepted audio, but rejected control cannot change lifecycle data.
+  expect(
+    JSON.parse(await readFile(join(path, "sessions", snapshot.id, "manifest.json"), "utf8"))
+      .snapshot.closedRuns,
+  ).toEqual(JSON.parse(accepted).snapshot.closedRuns);
+  await service.shutdown();
+  const restarted = await RecordingService.open(
+    { dataDirectory: path, development: true },
+    new CountingInference(),
+    hooks,
+  );
+  resources[resources.length - 1]!.service = restarted;
+  const resumed = await restarted.resume(snapshot.id);
+  expect(resumed.closedRuns).toEqual(paused.closedRuns);
+  const stopped = await restarted.stop(snapshot.id, resumed.epoch, runs, runTimings);
+  expect(Buffer.byteLength(JSON.stringify({ type: "snapshot", snapshot: stopped }))).toBeLessThan(
+    MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES,
+  );
+  const completed = await waitFor(
+    restarted,
+    snapshot.id,
+    (value) => value.processingState === "completed",
+  );
+  expect(completed.transcribedFrames).toBe(32_000);
+  expect(completed.stopRuns).toHaveLength(count);
+  await restarted.shutdown();
+  const finalized = await RecordingService.open(
+    { dataDirectory: path, development: true },
+    new CountingInference(),
+    hooks,
+  );
+  resources[resources.length - 1]!.service = finalized;
+  const detail = await finalized.detail(snapshot.id);
+  expect(detail.snapshot.processingState).toBe("completed");
+  expect(detail.snapshot.stopRuns).toHaveLength(count);
+  expect(detail.result?.finalText).toBe(
+    "Every window stays in order. Every window stays in order.",
+  );
+}, 15_000);
+
+test("direct pause and stop APIs apply the combined wire control budget before mutation", async () => {
+  const { service } = await setup();
+  const snapshot = await service.resume((await service.create(request())).id);
+  const runs = Array.from({ length: 12_000 }, (_, index) => ({
+    runID: `${index.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`,
+    inferenceFrames: 0,
+  }));
+  const runTimings = runs.map(({ runID }) => ({
+    runID,
+    startedAt: "2026-09-21T10:00:00Z",
+    endedAt: "2026-09-21T10:00:00Z",
+  }));
+  expect(Buffer.byteLength(JSON.stringify(runs))).toBeLessThan(
+    MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES,
+  );
+  expect(Buffer.byteLength(JSON.stringify(runTimings))).toBeLessThan(
+    MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES,
+  );
+  expect(
+    Buffer.byteLength(JSON.stringify({ type: "stop", epoch: snapshot.epoch, runs, runTimings })),
+  ).toBeGreaterThan(MAXIMUM_RECORDING_CONTROL_MESSAGE_BYTES);
+  await expect(service.stop(snapshot.id, snapshot.epoch, runs, runTimings)).rejects.toMatchObject({
+    code: "control_too_large",
+    status: 413,
+  });
+  await expect(service.pause(snapshot.id, snapshot.epoch, runs, runTimings)).rejects.toMatchObject({
+    code: "control_too_large",
+    status: 413,
+  });
+  expect(await service.get(snapshot.id)).toEqual(snapshot);
 });
