@@ -46,6 +46,7 @@ import { composeDictation } from "./domain/composition.ts";
 import { formatSpokenList } from "./domain/lists.ts";
 import { evaluateCorrectionInWorker } from "./domain/correction-runtime.ts";
 import { maxInputCharacters, modelHints, processingRecord } from "./domain/correction.ts";
+import type { RecordingSnapshot } from "./recording-contract.ts";
 
 const MAX_METADATA_BYTES = 1_048_576;
 const MAX_PREFERENCES_BYTES = 262_144;
@@ -378,6 +379,26 @@ export class GenerationService {
   }
   getPreferences() {
     return this.mutate(() => copy(this.preferences));
+  }
+  resolveRecordingContinuation(id: string, snapshot: RecordingSnapshot) {
+    return this.mutate(() => {
+      const previous = this.records.get(id.toUpperCase());
+      if (
+        !previous ||
+        previous.status !== "completed" ||
+        previous.device.id !== snapshot.device.id ||
+        previous.mode !== snapshot.mode
+      )
+        return;
+      const age = Date.parse(snapshot.createdAt) - Date.parse(previous.updatedAt);
+      if (!Number.isFinite(age) || age < 0 || age >= 900_000) return;
+      if (
+        previous.mode !== "test" &&
+        !["inserted", "listUpdated"].includes(previous.delivery?.status ?? "")
+      )
+        return;
+      return copy(previous.continuation);
+    });
   }
   updatePreferences(update: components["schemas"]["PreferencesSnapshot"]) {
     return this.mutate(async () => {

@@ -2897,4 +2897,1468 @@ public enum Operations {
             }
         }
     }
+    /// - Remark: HTTP `GET /v2/recordings/capabilities`.
+    /// - Remark: Generated from `#/paths//v2/recordings/capabilities/get(getRecordingCapabilities)`.
+    public enum GetRecordingCapabilities {
+        public static let id: Swift.String = "getRecordingCapabilities"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v2/recordings/capabilities/GET/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetRecordingCapabilities.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetRecordingCapabilities.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.GetRecordingCapabilities.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            public init(headers: Operations.GetRecordingCapabilities.Input.Headers = .init()) {
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/capabilities/GET/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v2/recordings/capabilities/GET/responses/200/content/application\/json`.
+                    case json(Components.Schemas.RecordingCapabilities)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Components.Schemas.RecordingCapabilities {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.GetRecordingCapabilities.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.GetRecordingCapabilities.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Success
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/capabilities/get(getRecordingCapabilities)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.GetRecordingCapabilities.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.GetRecordingCapabilities.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// A request, admission, or server error.
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/capabilities/get(getRecordingCapabilities)/responses/default`.
+            ///
+            /// HTTP response code: `default`.
+            case `default`(statusCode: Swift.Int, Components.Responses.APIError)
+            /// The associated value of the enum case if `self` is `.`default``.
+            ///
+            /// - Throws: An error if `self` is not `.`default``.
+            /// - SeeAlso: `.`default``.
+            public var `default`: Components.Responses.APIError {
+                get throws {
+                    switch self {
+                    case let .`default`(_, response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "default",
+                            response: self
+                        )
+                    }
+                }
+            }
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// - Remark: HTTP `GET /v2/recordings`.
+    /// - Remark: Generated from `#/paths//v2/recordings/get(listRecordings)`.
+    public enum ListRecordings {
+        public static let id: Swift.String = "listRecordings"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v2/recordings/GET/query`.
+            public struct Query: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/GET/query/limit`.
+                public var limit: Swift.Int?
+                /// - Remark: Generated from `#/paths/v2/recordings/GET/query/before`.
+                public var before: Swift.String?
+                /// Creates a new `Query`.
+                ///
+                /// - Parameters:
+                ///   - limit:
+                ///   - before:
+                public init(
+                    limit: Swift.Int? = nil,
+                    before: Swift.String? = nil
+                ) {
+                    self.limit = limit
+                    self.before = before
+                }
+            }
+            public var query: Operations.ListRecordings.Input.Query
+            /// - Remark: Generated from `#/paths/v2/recordings/GET/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.ListRecordings.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.ListRecordings.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.ListRecordings.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - query:
+            ///   - headers:
+            public init(
+                query: Operations.ListRecordings.Input.Query = .init(),
+                headers: Operations.ListRecordings.Input.Headers = .init()
+            ) {
+                self.query = query
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/GET/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v2/recordings/GET/responses/200/content/application\/json`.
+                    case json(Components.Schemas.RecordingPage)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Components.Schemas.RecordingPage {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.ListRecordings.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.ListRecordings.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Success
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/get(listRecordings)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.ListRecordings.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.ListRecordings.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// A request, admission, or server error.
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/get(listRecordings)/responses/default`.
+            ///
+            /// HTTP response code: `default`.
+            case `default`(statusCode: Swift.Int, Components.Responses.APIError)
+            /// The associated value of the enum case if `self` is `.`default``.
+            ///
+            /// - Throws: An error if `self` is not `.`default``.
+            /// - SeeAlso: `.`default``.
+            public var `default`: Components.Responses.APIError {
+                get throws {
+                    switch self {
+                    case let .`default`(_, response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "default",
+                            response: self
+                        )
+                    }
+                }
+            }
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// - Remark: HTTP `POST /v2/recordings`.
+    /// - Remark: Generated from `#/paths//v2/recordings/post(createRecording)`.
+    public enum CreateRecording {
+        public static let id: Swift.String = "createRecording"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v2/recordings/POST/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.CreateRecording.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.CreateRecording.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.CreateRecording.Input.Headers
+            /// - Remark: Generated from `#/paths/v2/recordings/POST/requestBody`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/POST/requestBody/content/application\/json`.
+                case json(Components.Schemas.CreateGenerationRequest)
+            }
+            public var body: Operations.CreateRecording.Input.Body
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - headers:
+            ///   - body:
+            public init(
+                headers: Operations.CreateRecording.Input.Headers = .init(),
+                body: Operations.CreateRecording.Input.Body
+            ) {
+                self.headers = headers
+                self.body = body
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Created: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/POST/responses/201/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v2/recordings/POST/responses/201/content/application\/json`.
+                    case json(Components.Schemas.RecordingSnapshot)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Components.Schemas.RecordingSnapshot {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.CreateRecording.Output.Created.Body
+                /// Creates a new `Created`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.CreateRecording.Output.Created.Body) {
+                    self.body = body
+                }
+            }
+            /// Success
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/post(createRecording)/responses/201`.
+            ///
+            /// HTTP response code: `201 created`.
+            case created(Operations.CreateRecording.Output.Created)
+            /// The associated value of the enum case if `self` is `.created`.
+            ///
+            /// - Throws: An error if `self` is not `.created`.
+            /// - SeeAlso: `.created`.
+            public var created: Operations.CreateRecording.Output.Created {
+                get throws {
+                    switch self {
+                    case let .created(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "created",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// A request, admission, or server error.
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/post(createRecording)/responses/default`.
+            ///
+            /// HTTP response code: `default`.
+            case `default`(statusCode: Swift.Int, Components.Responses.APIError)
+            /// The associated value of the enum case if `self` is `.`default``.
+            ///
+            /// - Throws: An error if `self` is not `.`default``.
+            /// - SeeAlso: `.`default``.
+            public var `default`: Components.Responses.APIError {
+                get throws {
+                    switch self {
+                    case let .`default`(_, response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "default",
+                            response: self
+                        )
+                    }
+                }
+            }
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// - Remark: HTTP `GET /v2/recordings/{id}`.
+    /// - Remark: Generated from `#/paths//v2/recordings/{id}/get(getRecording)`.
+    public enum GetRecording {
+        public static let id: Swift.String = "getRecording"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/GET/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/GET/path/id`.
+                public var id: Components.Schemas.Uuid
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                public init(id: Components.Schemas.Uuid) {
+                    self.id = id
+                }
+            }
+            public var path: Operations.GetRecording.Input.Path
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/GET/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetRecording.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetRecording.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.GetRecording.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            public init(
+                path: Operations.GetRecording.Input.Path,
+                headers: Operations.GetRecording.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/GET/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v2/recordings/{id}/GET/responses/200/content/application\/json`.
+                    case json(Components.Schemas.RecordingDetail)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Components.Schemas.RecordingDetail {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.GetRecording.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.GetRecording.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Success
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/get(getRecording)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.GetRecording.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.GetRecording.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// A request, admission, or server error.
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/get(getRecording)/responses/default`.
+            ///
+            /// HTTP response code: `default`.
+            case `default`(statusCode: Swift.Int, Components.Responses.APIError)
+            /// The associated value of the enum case if `self` is `.`default``.
+            ///
+            /// - Throws: An error if `self` is not `.`default``.
+            /// - SeeAlso: `.`default``.
+            public var `default`: Components.Responses.APIError {
+                get throws {
+                    switch self {
+                    case let .`default`(_, response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "default",
+                            response: self
+                        )
+                    }
+                }
+            }
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// - Remark: HTTP `GET /v2/recordings/{id}/transcript`.
+    /// - Remark: Generated from `#/paths//v2/recordings/{id}/transcript/get(getRecordingTranscript)`.
+    public enum GetRecordingTranscript {
+        public static let id: Swift.String = "getRecordingTranscript"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/transcript/GET/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/transcript/GET/path/id`.
+                public var id: Components.Schemas.Uuid
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                public init(id: Components.Schemas.Uuid) {
+                    self.id = id
+                }
+            }
+            public var path: Operations.GetRecordingTranscript.Input.Path
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/transcript/GET/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetRecordingTranscript.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetRecordingTranscript.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.GetRecordingTranscript.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            public init(
+                path: Operations.GetRecordingTranscript.Input.Path,
+                headers: Operations.GetRecordingTranscript.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/transcript/GET/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v2/recordings/{id}/transcript/GET/responses/200/content/text\/plain`.
+                    case plainText(OpenAPIRuntime.HTTPBody)
+                    /// The associated value of the enum case if `self` is `.plainText`.
+                    ///
+                    /// - Throws: An error if `self` is not `.plainText`.
+                    /// - SeeAlso: `.plainText`.
+                    public var plainText: OpenAPIRuntime.HTTPBody {
+                        get throws {
+                            switch self {
+                            case let .plainText(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.GetRecordingTranscript.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.GetRecordingTranscript.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Success
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/transcript/get(getRecordingTranscript)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.GetRecordingTranscript.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.GetRecordingTranscript.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// A request, admission, or server error.
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/transcript/get(getRecordingTranscript)/responses/default`.
+            ///
+            /// HTTP response code: `default`.
+            case `default`(statusCode: Swift.Int, Components.Responses.APIError)
+            /// The associated value of the enum case if `self` is `.`default``.
+            ///
+            /// - Throws: An error if `self` is not `.`default``.
+            /// - SeeAlso: `.`default``.
+            public var `default`: Components.Responses.APIError {
+                get throws {
+                    switch self {
+                    case let .`default`(_, response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "default",
+                            response: self
+                        )
+                    }
+                }
+            }
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case plainText
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "text/plain":
+                    self = .plainText
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .plainText:
+                    return "text/plain"
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .plainText,
+                    .json
+                ]
+            }
+        }
+    }
+    /// - Remark: HTTP `GET /v2/recordings/{id}/audio/{kind}`.
+    /// - Remark: Generated from `#/paths//v2/recordings/{id}/audio/{kind}/get(getRecordingAudio)`.
+    public enum GetRecordingAudio {
+        public static let id: Swift.String = "getRecordingAudio"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/GET/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/GET/path/id`.
+                public var id: Components.Schemas.Uuid
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/GET/path/kind`.
+                public var kind: Components.Schemas.AudioKind
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                ///   - kind:
+                public init(
+                    id: Components.Schemas.Uuid,
+                    kind: Components.Schemas.AudioKind
+                ) {
+                    self.id = id
+                    self.kind = kind
+                }
+            }
+            public var path: Operations.GetRecordingAudio.Input.Path
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/GET/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetRecordingAudio.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetRecordingAudio.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.GetRecordingAudio.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            public init(
+                path: Operations.GetRecordingAudio.Input.Path,
+                headers: Operations.GetRecordingAudio.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/GET/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/GET/responses/200/content/audio\/wav`.
+                    case audioWav(OpenAPIRuntime.HTTPBody)
+                    /// The associated value of the enum case if `self` is `.audioWav`.
+                    ///
+                    /// - Throws: An error if `self` is not `.audioWav`.
+                    /// - SeeAlso: `.audioWav`.
+                    public var audioWav: OpenAPIRuntime.HTTPBody {
+                        get throws {
+                            switch self {
+                            case let .audioWav(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.GetRecordingAudio.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.GetRecordingAudio.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Success
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/audio/{kind}/get(getRecordingAudio)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.GetRecordingAudio.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.GetRecordingAudio.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// A request, admission, or server error.
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/audio/{kind}/get(getRecordingAudio)/responses/default`.
+            ///
+            /// HTTP response code: `default`.
+            case `default`(statusCode: Swift.Int, Components.Responses.APIError)
+            /// The associated value of the enum case if `self` is `.`default``.
+            ///
+            /// - Throws: An error if `self` is not `.`default``.
+            /// - SeeAlso: `.`default``.
+            public var `default`: Components.Responses.APIError {
+                get throws {
+                    switch self {
+                    case let .`default`(_, response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "default",
+                            response: self
+                        )
+                    }
+                }
+            }
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case audioWav
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "audio/wav":
+                    self = .audioWav
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .audioWav:
+                    return "audio/wav"
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .audioWav,
+                    .json
+                ]
+            }
+        }
+    }
+    /// - Remark: HTTP `POST /v2/recordings/{id}/discard`.
+    /// - Remark: Generated from `#/paths//v2/recordings/{id}/discard/post(discardRecording)`.
+    public enum DiscardRecording {
+        public static let id: Swift.String = "discardRecording"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/discard/POST/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/discard/POST/path/id`.
+                public var id: Components.Schemas.Uuid
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                public init(id: Components.Schemas.Uuid) {
+                    self.id = id
+                }
+            }
+            public var path: Operations.DiscardRecording.Input.Path
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/discard/POST/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.DiscardRecording.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.DiscardRecording.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.DiscardRecording.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            public init(
+                path: Operations.DiscardRecording.Input.Path,
+                headers: Operations.DiscardRecording.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/discard/POST/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v2/recordings/{id}/discard/POST/responses/200/content/application\/json`.
+                    case json(Components.Schemas.RecordingSnapshot)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Components.Schemas.RecordingSnapshot {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.DiscardRecording.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.DiscardRecording.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Success
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/discard/post(discardRecording)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.DiscardRecording.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.DiscardRecording.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// A request, admission, or server error.
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/discard/post(discardRecording)/responses/default`.
+            ///
+            /// HTTP response code: `default`.
+            case `default`(statusCode: Swift.Int, Components.Responses.APIError)
+            /// The associated value of the enum case if `self` is `.`default``.
+            ///
+            /// - Throws: An error if `self` is not `.`default``.
+            /// - SeeAlso: `.`default``.
+            public var `default`: Components.Responses.APIError {
+                get throws {
+                    switch self {
+                    case let .`default`(_, response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "default",
+                            response: self
+                        )
+                    }
+                }
+            }
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// - Remark: HTTP `POST /v2/recordings/{id}/delivery`.
+    /// - Remark: Generated from `#/paths//v2/recordings/{id}/delivery/post(recordRecordingDelivery)`.
+    public enum RecordRecordingDelivery {
+        public static let id: Swift.String = "recordRecordingDelivery"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/delivery/POST/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/delivery/POST/path/id`.
+                public var id: Components.Schemas.Uuid
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                public init(id: Components.Schemas.Uuid) {
+                    self.id = id
+                }
+            }
+            public var path: Operations.RecordRecordingDelivery.Input.Path
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/delivery/POST/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.RecordRecordingDelivery.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.RecordRecordingDelivery.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.RecordRecordingDelivery.Input.Headers
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/delivery/POST/requestBody`.
+            @frozen public enum Body: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/delivery/POST/requestBody/content/application\/json`.
+                case json(Components.Schemas.DeliveryReceipt)
+            }
+            public var body: Operations.RecordRecordingDelivery.Input.Body
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            ///   - body:
+            public init(
+                path: Operations.RecordRecordingDelivery.Input.Path,
+                headers: Operations.RecordRecordingDelivery.Input.Headers = .init(),
+                body: Operations.RecordRecordingDelivery.Input.Body
+            ) {
+                self.path = path
+                self.headers = headers
+                self.body = body
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/delivery/POST/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v2/recordings/{id}/delivery/POST/responses/200/content/application\/json`.
+                    case json(Components.Schemas.GenerationRecord)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    public var json: Components.Schemas.GenerationRecord {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.RecordRecordingDelivery.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.RecordRecordingDelivery.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Success
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/delivery/post(recordRecordingDelivery)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.RecordRecordingDelivery.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.RecordRecordingDelivery.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// A request, admission, or server error.
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/delivery/post(recordRecordingDelivery)/responses/default`.
+            ///
+            /// HTTP response code: `default`.
+            case `default`(statusCode: Swift.Int, Components.Responses.APIError)
+            /// The associated value of the enum case if `self` is `.`default``.
+            ///
+            /// - Throws: An error if `self` is not `.`default``.
+            /// - SeeAlso: `.`default``.
+            public var `default`: Components.Responses.APIError {
+                get throws {
+                    switch self {
+                    case let .`default`(_, response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "default",
+                            response: self
+                        )
+                    }
+                }
+            }
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Upgrade to WebSocket subprotocol sotto.recording.v1. Binary audio is UInt32BE JSON header length, UTF8 RecordingAudioHeader, then little-endian float32 PCM. Text controls resume, context, pause, stop and ping; server sends snapshots, acknowledgments, progress and errors. See docs/recording-protocol.md for durable ACK, fencing and resume semantics.
+    ///
+    /// - Remark: HTTP `GET /v2/recordings/{id}/stream`.
+    /// - Remark: Generated from `#/paths//v2/recordings/{id}/stream/get(streamRecording)`.
+    public enum StreamRecording {
+        public static let id: Swift.String = "streamRecording"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/stream/GET/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/stream/GET/path/id`.
+                public var id: Components.Schemas.Uuid
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                public init(id: Components.Schemas.Uuid) {
+                    self.id = id
+                }
+            }
+            public var path: Operations.StreamRecording.Input.Path
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/stream/GET/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.StreamRecording.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.StreamRecording.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.StreamRecording.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            public init(
+                path: Operations.StreamRecording.Input.Path,
+                headers: Operations.StreamRecording.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct SwitchingProtocols: Sendable, Hashable {
+                /// Creates a new `SwitchingProtocols`.
+                public init() {}
+            }
+            /// WebSocket upgrade
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/stream/get(streamRecording)/responses/101`.
+            ///
+            /// HTTP response code: `101 switchingProtocols`.
+            case switchingProtocols(Operations.StreamRecording.Output.SwitchingProtocols)
+            /// WebSocket upgrade
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/stream/get(streamRecording)/responses/101`.
+            ///
+            /// HTTP response code: `101 switchingProtocols`.
+            public static var switchingProtocols: Self {
+                .switchingProtocols(.init())
+            }
+            /// The associated value of the enum case if `self` is `.switchingProtocols`.
+            ///
+            /// - Throws: An error if `self` is not `.switchingProtocols`.
+            /// - SeeAlso: `.switchingProtocols`.
+            public var switchingProtocols: Operations.StreamRecording.Output.SwitchingProtocols {
+                get throws {
+                    switch self {
+                    case let .switchingProtocols(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "switchingProtocols",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// A request, admission, or server error.
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/stream/get(streamRecording)/responses/default`.
+            ///
+            /// HTTP response code: `default`.
+            case `default`(statusCode: Swift.Int, Components.Responses.APIError)
+            /// The associated value of the enum case if `self` is `.`default``.
+            ///
+            /// - Throws: An error if `self` is not `.`default``.
+            /// - SeeAlso: `.`default``.
+            public var `default`: Components.Responses.APIError {
+                get throws {
+                    switch self {
+                    case let .`default`(_, response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "default",
+                            response: self
+                        )
+                    }
+                }
+            }
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// - Remark: HTTP `GET /v2/recordings/{id}/audio/{kind}/{runID}`.
+    /// - Remark: Generated from `#/paths//v2/recordings/{id}/audio/{kind}/{runID}/get(getRecordingRunAudio)`.
+    public enum GetRecordingRunAudio {
+        public static let id: Swift.String = "getRecordingRunAudio"
+        public struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/{runID}/GET/path`.
+            public struct Path: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/{runID}/GET/path/id`.
+                public var id: Components.Schemas.Uuid
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/{runID}/GET/path/kind`.
+                public var kind: Components.Schemas.AudioKind
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/{runID}/GET/path/runID`.
+                public var runID: Components.Schemas.Uuid
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id:
+                ///   - kind:
+                ///   - runID:
+                public init(
+                    id: Components.Schemas.Uuid,
+                    kind: Components.Schemas.AudioKind,
+                    runID: Components.Schemas.Uuid
+                ) {
+                    self.id = id
+                    self.kind = kind
+                    self.runID = runID
+                }
+            }
+            public var path: Operations.GetRecordingRunAudio.Input.Path
+            /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/{runID}/GET/header`.
+            public struct Headers: Sendable, Hashable {
+                public var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetRecordingRunAudio.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                public init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetRecordingRunAudio.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            public var headers: Operations.GetRecordingRunAudio.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            public init(
+                path: Operations.GetRecordingRunAudio.Input.Path,
+                headers: Operations.GetRecordingRunAudio.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        @frozen public enum Output: Sendable, Hashable {
+            public struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/{runID}/GET/responses/200/content`.
+                @frozen public enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v2/recordings/{id}/audio/{kind}/{runID}/GET/responses/200/content/audio\/wav`.
+                    case audioWav(OpenAPIRuntime.HTTPBody)
+                    /// The associated value of the enum case if `self` is `.audioWav`.
+                    ///
+                    /// - Throws: An error if `self` is not `.audioWav`.
+                    /// - SeeAlso: `.audioWav`.
+                    public var audioWav: OpenAPIRuntime.HTTPBody {
+                        get throws {
+                            switch self {
+                            case let .audioWav(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                public var body: Operations.GetRecordingRunAudio.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                public init(body: Operations.GetRecordingRunAudio.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Success
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/audio/{kind}/{runID}/get(getRecordingRunAudio)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.GetRecordingRunAudio.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            public var ok: Operations.GetRecordingRunAudio.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// A request, admission, or server error.
+            ///
+            /// - Remark: Generated from `#/paths//v2/recordings/{id}/audio/{kind}/{runID}/get(getRecordingRunAudio)/responses/default`.
+            ///
+            /// HTTP response code: `default`.
+            case `default`(statusCode: Swift.Int, Components.Responses.APIError)
+            /// The associated value of the enum case if `self` is `.`default``.
+            ///
+            /// - Throws: An error if `self` is not `.`default``.
+            /// - SeeAlso: `.`default``.
+            public var `default`: Components.Responses.APIError {
+                get throws {
+                    switch self {
+                    case let .`default`(_, response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "default",
+                            response: self
+                        )
+                    }
+                }
+            }
+        }
+        @frozen public enum AcceptableContentType: AcceptableProtocol {
+            case audioWav
+            case json
+            case other(Swift.String)
+            public init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "audio/wav":
+                    self = .audioWav
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            public var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .audioWav:
+                    return "audio/wav"
+                case .json:
+                    return "application/json"
+                }
+            }
+            public static var allCases: [Self] {
+                [
+                    .audioWav,
+                    .json
+                ]
+            }
+        }
+    }
 }

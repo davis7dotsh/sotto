@@ -7,12 +7,14 @@ import Foundation
 final class AudioCaptureRequest: @unchecked Sendable {
     let id = UUID()
     let onChunk: (@Sendable (CapturedAudioChunk) -> Void)?
+    let spool: RecordingSpool?
     private enum State { case open, released, cancelled }
     private let lock = NSLock()
     private var state: State = .open
 
-    init(onChunk: (@Sendable (CapturedAudioChunk) -> Void)? = nil) {
+    init(onChunk: (@Sendable (CapturedAudioChunk) -> Void)? = nil, spool: RecordingSpool? = nil) {
         self.onChunk = onChunk
+        self.spool = spool
     }
 
     var acceptsAudio: Bool { lock.withLock { state == .open } }
@@ -94,7 +96,7 @@ final class AudioCaptureWorker: @unchecked Sendable {
         }
     }
 
-    func stop(request: AudioCaptureRequest) async throws -> CapturedAudio {
+    func stop(request: AudioCaptureRequest, pausing: Bool = false, interruption: String? = nil) async throws -> CapturedAudio {
         request.release()
         let writer: RecordingWriter? = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -118,7 +120,7 @@ final class AudioCaptureWorker: @unchecked Sendable {
             throw AudioRecordingError.cancelled
         }
         return try await withTaskCancellationHandler {
-            let audio = try await writer.finish()
+            let audio = try await writer.finish(pausing: pausing, interruption: interruption)
             guard !request.isCancelled, !Task.isCancelled else {
                 audio.cleanup()
                 throw AudioRecordingError.cancelled

@@ -352,3 +352,103 @@ private struct UploadBuffer {
         frames += Int64(chunk.data.count / (chunk.channels * 4))
     }
 }
+
+/// The long-recording contract is versioned independently of legacy generated
+/// wire models. Requests still use this take's immutable endpoint/credential.
+extension ServerClient {
+    private func recordingJSON<Response: Decodable>(path: String, method: String = "GET", body: Data? = nil,
+                                                    query: [URLQueryItem] = []) async throws -> Response {
+        let (data, response) = try await session.data(for: request(path: path, method: method, body: body, query: query))
+        try Self.validate(response, data: data)
+        guard data.count <= 16 * 1_024 * 1_024 else { throw ServerClientError.invalidResponse }
+        do { return try RecordingWire.decoder().decode(Response.self, from: data) }
+        catch { throw ServerClientError.invalidResponse }
+    }
+
+    func recordingCapabilities() async throws -> RecordingCapabilities {
+        try await recordingJSON(path: "v2/recordings/capabilities")
+    }
+
+    func createRecording(_ value: CreateGenerationRequest) async throws -> RecordingSnapshot {
+        try await recordingJSON(path: "v2/recordings", method: "POST", body: RecordingWire.encoder().encode(value))
+    }
+
+    func recordingDetail(_ id: UUID) async throws -> RecordingDetail {
+        try await recordingJSON(path: "v2/recordings/\(id)")
+    }
+
+    func recording(_ id: UUID) async throws -> RecordingSnapshot { try await recordingDetail(id).snapshot }
+
+    func recordingHistory(before cursor: String? = nil, source: String? = nil) async throws -> RecordingPage {
+        let query = cursor.map { [URLQueryItem(name: "before", value: $0)] } ?? []
+        return try await recordingJSON(path: "v2/recordings", query: query)
+    }
+
+    func discardRecording(_ id: UUID) async throws {
+        try await send(path: "v2/recordings/\(id)/discard", method: "POST")
+    }
+
+    func recordingDelivery(_ id: UUID, receipt: DeliveryReceipt) async throws {
+        try await send(path: "v2/recordings/\(id)/delivery", method: "POST", body: RecordingWire.encoder().encode(receipt))
+    }
+
+    func materializedRecording(_ id: UUID) async throws -> GenerationRecord {
+        let detail = try await recordingDetail(id)
+        if let result = detail.result { return result }
+        return Self.generationSummary(detail.snapshot)
+    }
+
+    static func generationSummary(_ snapshot: RecordingSnapshot) -> GenerationRecord {
+        let status: GenerationStatus
+        if snapshot.captureState == .discarded { status = .cancelled }
+        else if snapshot.processingState == .completed { status = .completed }
+        else if snapshot.processingState == .failed { status = .failed }
+        else if snapshot.captureState == .recording { status = .receiving }
+        else if snapshot.processingState == .processing { status = .transcribing }
+        else { status = .queued }
+        var result = GenerationRecord(id: snapshot.id, requestID: snapshot.requestID, device: snapshot.device,
+                                      mode: snapshot.mode, status: status, createdAt: snapshot.createdAt,
+                                      settings: snapshot.settings)
+        result.previewText = snapshot.previewText
+        if snapshot.uploadedFrames > 0, snapshot.uploadedFrames <= Int64.max / 4 {
+            result.inferenceAudio = AudioArtifact(filename: "inference.wav", sampleRate: 16_000, channels: 1,
+                                                 frameCount: snapshot.uploadedFrames, byteCount: snapshot.uploadedFrames * 4)
+        }
+        result.error = snapshot.error
+        result.progress = snapshot.uploadedFrames > 0
+            ? min(1, Double(snapshot.transcribedFrames) / Double(snapshot.uploadedFrames)) : nil
+        return result
+    }
+
+    func recordingWebSocketRequest(_ id: UUID) throws -> URLRequest {
+        var result = try request(path: "v2/recordings/\(id)/stream")
+        guard let url = result.url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme else { throw ServerClientError.invalidEndpoint }
+        switch scheme {
+        case "https": components.scheme = "wss"
+        case "http": components.scheme = "ws"
+        default: throw ServerClientError.invalidEndpoint
+        }
+        guard let target = components.url else { throw ServerClientError.invalidEndpoint }
+        result.url = target
+        result.timeoutInterval = 15
+        result.setValue("sotto.recording.v1", forHTTPHeaderField: "Sec-WebSocket-Protocol")
+        return result
+    }
+}
+
+extension ServerClient {
+    func recordingAudio(_ id: UUID, kind: AudioKind, runID: UUID? = nil) async throws -> URL {
+        let suffix = runID.map { "/\($0)" } ?? ""
+        let (temporary, response) = try await session.download(for: request(path: "v2/recordings/\(id)/audio/\(kind.rawValue)\(suffix)"))
+        try Self.validate(response)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Sotto-remote-preview", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let runSuffix = runID.map { "-\($0)" } ?? ""
+        let destination = directory.appendingPathComponent("\(id)-\(kind.rawValue)\(runSuffix).wav")
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.moveItem(at: temporary, to: destination)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
+        return destination
+    }
+}

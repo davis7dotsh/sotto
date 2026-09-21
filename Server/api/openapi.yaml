@@ -11,6 +11,7 @@ security:
   -
     bearerAuth: []
 x-sotto-apiVersion: 1
+x-sotto-recordingProtocol: "sotto.recording.v1"
 x-sotto-defaultPort: 8391
 x-sotto-maximumRecordingSeconds: 180
 x-sotto-maximumChunkBytes: 1048576
@@ -486,6 +487,207 @@ paths:
           required: true
           schema:
             "$ref": "#/components/schemas/UUID"
+  /v2/recordings/capabilities:
+    get:
+      operationId: getRecordingCapabilities
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingCapabilities"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v2/recordings:
+    post:
+      operationId: createRecording
+      responses:
+        "201":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingSnapshot"
+        default:
+          $ref: "#/components/responses/APIError"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGenerationRequest"
+    get:
+      operationId: listRecordings
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingPage"
+        default:
+          $ref: "#/components/responses/APIError"
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: before
+          in: query
+          schema:
+            type: string
+  /v2/recordings/{id}:
+    get:
+      operationId: getRecording
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingDetail"
+        default:
+          $ref: "#/components/responses/APIError"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+  /v2/recordings/{id}/transcript:
+    get:
+      operationId: getRecordingTranscript
+      responses:
+        "200":
+          description: Success
+          content:
+            text/plain:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/APIError"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+  /v2/recordings/{id}/audio/{kind}:
+    get:
+      operationId: getRecordingAudio
+      responses:
+        "200":
+          description: Success
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        default:
+          $ref: "#/components/responses/APIError"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - name: kind
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/AudioKind"
+  /v2/recordings/{id}/discard:
+    post:
+      operationId: discardRecording
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingSnapshot"
+        default:
+          $ref: "#/components/responses/APIError"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+  /v2/recordings/{id}/delivery:
+    post:
+      operationId: recordRecordingDelivery
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerationRecord"
+        default:
+          $ref: "#/components/responses/APIError"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliveryReceipt"
+  /v2/recordings/{id}/stream:
+    get:
+      operationId: streamRecording
+      description: Upgrade to WebSocket subprotocol sotto.recording.v1. Binary audio is UInt32BE JSON
+        header length, UTF8 RecordingAudioHeader, then little-endian float32 PCM. Text controls
+        resume, context, pause, stop and ping; server sends snapshots, acknowledgments, progress and
+        errors. See docs/recording-protocol.md for durable ACK, fencing and resume semantics.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "101":
+          description: WebSocket upgrade
+        default:
+          $ref: "#/components/responses/APIError"
+  /v2/recordings/{id}/audio/{kind}/{runID}:
+    get:
+      operationId: getRecordingRunAudio
+      responses:
+        "200":
+          description: Success
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        default:
+          $ref: "#/components/responses/APIError"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - name: kind
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/AudioKind"
+        - name: runID
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
 components:
   schemas:
     UUID:
@@ -1261,6 +1463,336 @@ components:
       required:
         - "code"
         - "message"
+    RecordingCapabilities:
+      type: object
+      additionalProperties: false
+      properties:
+        protocol:
+          type: string
+          enum:
+            - sotto.recording.v1
+        maximumPCMBytes:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+      required:
+        - protocol
+        - maximumPCMBytes
+    RecordingRunEndpoint:
+      type: object
+      additionalProperties: false
+      properties:
+        runID:
+          $ref: "#/components/schemas/UUID"
+        inferenceFrames:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        originalFrames:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+      required:
+        - runID
+        - inferenceFrames
+    RecordingStreamCheckpoint:
+      type: object
+      additionalProperties: false
+      properties:
+        runID:
+          $ref: "#/components/schemas/UUID"
+        kind:
+          $ref: "#/components/schemas/AudioKind"
+        format:
+          $ref: "#/components/schemas/AudioStreamFormat"
+        nextSequence:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        frameCount:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+      required:
+        - runID
+        - kind
+        - format
+        - nextSequence
+        - frameCount
+    RecordingSnapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        requestID:
+          $ref: "#/components/schemas/UUID"
+        device:
+          $ref: "#/components/schemas/DeviceIdentity"
+        mode:
+          $ref: "#/components/schemas/GenerationMode"
+        settings:
+          $ref: "#/components/schemas/PreferencesSnapshot"
+        createdAt:
+          type: string
+          format: date-time
+        revision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        captureState:
+          type: string
+          enum:
+            - recording
+            - interrupted
+            - stopped
+            - discarded
+        processingState:
+          type: string
+          enum:
+            - queued
+            - processing
+            - completed
+            - failed
+        uploadedFrames:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        transcribedFrames:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        proofreadFrames:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        streams:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingStreamCheckpoint"
+        epoch:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        stopRuns:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingRunEndpoint"
+        error:
+          type: string
+        previewText:
+          type: string
+        continuationID:
+          $ref: "#/components/schemas/UUID"
+        closedRuns:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingRunEndpoint"
+        runTimings:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingRunTiming"
+      required:
+        - id
+        - requestID
+        - device
+        - mode
+        - settings
+        - createdAt
+        - revision
+        - captureState
+        - processingState
+        - uploadedFrames
+        - transcribedFrames
+        - proofreadFrames
+        - streams
+        - epoch
+        - previewText
+    RecordingDetail:
+      type: object
+      additionalProperties: false
+      properties:
+        snapshot:
+          $ref: "#/components/schemas/RecordingSnapshot"
+        result:
+          $ref: "#/components/schemas/GenerationRecord"
+      required:
+        - snapshot
+    RecordingPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingSnapshot"
+        nextCursor:
+          type: string
+      required:
+        - items
+    RecordingAudioHeader:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum:
+            - audio
+        epoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        runID:
+          $ref: "#/components/schemas/UUID"
+        kind:
+          $ref: "#/components/schemas/AudioKind"
+        sequence:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        firstFrame:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        format:
+          $ref: "#/components/schemas/AudioStreamFormat"
+        frameCount:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+      required:
+        - type
+        - epoch
+        - runID
+        - kind
+        - sequence
+        - firstFrame
+        - format
+        - frameCount
+        - sha256
+    RecordingStopRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum:
+            - stop
+        epoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingRunEndpoint"
+        runTimings:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingRunTiming"
+      required:
+        - type
+        - epoch
+        - runs
+    RecordingAck:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum:
+            - ack
+        runID:
+          $ref: "#/components/schemas/UUID"
+        kind:
+          $ref: "#/components/schemas/AudioKind"
+        nextSequence:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        frameCount:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        revision:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+      required:
+        - type
+        - runID
+        - kind
+        - nextSequence
+        - frameCount
+        - revision
+    RecordingContextRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum:
+            - context
+        epoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        continuationID:
+          $ref: "#/components/schemas/UUID"
+      required:
+        - type
+        - epoch
+        - continuationID
+    RecordingRunTiming:
+      type: object
+      additionalProperties: false
+      properties:
+        runID:
+          $ref: "#/components/schemas/UUID"
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        gapBeforeMilliseconds:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+      required:
+        - runID
+        - startedAt
+    RecordingPauseRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum:
+            - pause
+        epoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingRunEndpoint"
+        runTimings:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingRunTiming"
+        interruption:
+          type: string
+          maxLength: 4096
+      required:
+        - type
+        - epoch
+        - runs
+        - runTimings
   securitySchemes:
     bearerAuth:
       type: "http"

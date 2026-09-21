@@ -17,6 +17,9 @@ export interface HelperResponse {
   omittedTerms?: string[];
   tokenCount?: number;
   tokenBudget?: number;
+  boundarySeconds?: number;
+  spans?: { text: string; startSeconds: number; endSeconds: number }[];
+  segmentSpans?: { text: string; startSeconds: number; endSeconds: number }[];
 }
 
 export interface HelperConfiguration {
@@ -49,7 +52,7 @@ function decodeResponse(line: Buffer): HelperResponse | undefined {
   const response = value as Record<string, unknown>;
   if (typeof response.type !== "string") return;
   const strings = ["id", "message", "text", "language", "engineVersion"];
-  const numbers = ["duration", "elapsed", "value"];
+  const numbers = ["duration", "elapsed", "value", "boundarySeconds"];
   const integers = ["tokenCount", "tokenBudget"];
   if (
     strings.some(
@@ -70,6 +73,21 @@ function decodeResponse(line: Buffer): HelperResponse | undefined {
     )
       return;
   }
+  for (const key of ["spans", "segmentSpans"])
+    if (response[key] != null) {
+      if (!Array.isArray(response[key]) || response[key].length > 65_536) return;
+      for (const span of response[key]) {
+        if (!span || typeof span !== "object" || Array.isArray(span)) return;
+        const fields = span as Record<string, unknown>;
+        if (
+          typeof fields.text !== "string" ||
+          /[\uD800-\uDFFF]/u.test(fields.text) ||
+          typeof fields.startSeconds !== "number" ||
+          typeof fields.endSeconds !== "number"
+        )
+          return;
+      }
+    }
   // JSON null is the same as an absent optional field in Swift's decoder.
   for (const key of Object.keys(response)) if (response[key] === null) delete response[key];
   return response as unknown as HelperResponse;

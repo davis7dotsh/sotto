@@ -55,6 +55,18 @@ afterEach(async () => {
 });
 
 describe("native inference subprocess protocol", () => {
+  test("warm acoustic preflight returns a bounded quiet cut or no cut without changing ASR context", async () => {
+    const first = await fixture("boundary");
+    expect(await first.inference.findSpeechBoundary(first.model)).toBe(32.5);
+    expect((await first.inference.transcribe(first.model, "en", [])).text).toBe("Hello world.");
+    const second = await fixture();
+    expect(await second.inference.findSpeechBoundary(second.model)).toBeUndefined();
+    const invalid = await fixture("invalid-boundary");
+    await expect(invalid.inference.findSpeechBoundary(invalid.model)).rejects.toMatchObject({
+      code: "invalidResponse",
+    });
+    expect((await invalid.inference.readiness(false)).speechLoaded).toBe(false);
+  });
   test("warm helpers serve both requests, clamp matching progress, and survive idle cancellation", async () => {
     const { inference, model } = await fixture();
     await inference.warmUp();
@@ -81,6 +93,10 @@ describe("native inference subprocess protocol", () => {
       tokenCount: 1,
       tokenBudget: 223,
     });
+    expect(speech.spans).toEqual([
+      { text: "Hello", startSeconds: 0, endSeconds: 0.8 },
+      { text: " world.", startSeconds: 0.8, endSeconds: 2 },
+    ]);
     expect(progress).toEqual([0, 0.5, 1]);
     expect(
       await inference.correct(speech.text, ["Sotto"], "en", "Keep punctuation."),
@@ -114,7 +130,14 @@ describe("native inference subprocess protocol", () => {
   });
 
   test("malformed vocabulary diagnostics and result content invalidate the helper", async () => {
-    for (const mode of ["invalid-hints", "invalid-result"]) {
+    for (const mode of [
+      "invalid-hints",
+      "invalid-result",
+      "missing-spans",
+      "invalid-spans",
+      "unordered-spans",
+      "incomplete-spans",
+    ]) {
       const { inference, model } = await fixture(mode);
       await expect(inference.transcribe(model, "en", ["auth"])).rejects.toMatchObject({
         code: "invalidResponse",

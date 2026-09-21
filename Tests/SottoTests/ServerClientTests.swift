@@ -153,12 +153,13 @@ private final class RequestBodyCollector: @unchecked Sendable {
     func append(_ body: Data) { lock.withLock { bodies.append(body) } }
 }
 
-private final class HTTPFixture: @unchecked Sendable {
+final class HTTPFixture: @unchecked Sendable {
     let id = UUID().uuidString.lowercased()
     let session: URLSession
     private let lock = NSLock()
     private var captured: [URLRequest] = []
     var respond: ((URLRequest) throws -> (Int, Data))?
+    var respondAsync: ((URLRequest, @escaping (Result<(Int, Data), Error>) -> Void) -> Void)?
     var endpoint: String { "https://\(id).test" }
     var requests: [URLRequest] { lock.withLock { captured } }
 
@@ -169,9 +170,10 @@ private final class HTTPFixture: @unchecked Sendable {
         FixtureURLProtocol.register(self)
     }
     deinit { FixtureURLProtocol.unregister(id) }
-    func response(_ request: URLRequest) throws -> (Int, Data) {
+    func response(_ request: URLRequest, completion: @escaping (Result<(Int, Data), Error>) -> Void) {
         lock.withLock { captured.append(request) }
-        return try respond?(request) ?? (500, Data())
+        if let respondAsync { respondAsync(request, completion) }
+        else { completion(Result { try respond?(request) ?? (500, Data()) }) }
     }
 }
 
@@ -188,13 +190,16 @@ private final class FixtureURLProtocol: URLProtocol, @unchecked Sendable {
         guard let fixture = Self.lock.withLock({ Self.fixtures[id]?.value }) else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost)); return
         }
-        do {
-            let (status, data) = try fixture.response(request)
-            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch { client?.urlProtocol(self, didFailWithError: error) }
+        fixture.response(request) { [self] result in
+            switch result {
+            case .success(let (status, data)):
+                let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: data)
+                client?.urlProtocolDidFinishLoading(self)
+            case .failure(let error): client?.urlProtocol(self, didFailWithError: error)
+            }
+        }
     }
     override func stopLoading() {}
 }
