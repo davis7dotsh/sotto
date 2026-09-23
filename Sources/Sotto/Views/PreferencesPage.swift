@@ -155,7 +155,9 @@ private struct DevicePreferencesForm: View {
             keyRecorder.onCancel = { controller.setKeyRecording(false) }
             keyRecorder.onTimeout = {
                 controller.setKeyRecording(false)
-                keyRecorderMessage = "No key pressed. Click to try again."
+                // macOS can swallow Globe presses before the app sees them, and
+                // the Fn note only shows once Fn is chosen, so repeat it here.
+                keyRecorderMessage = "No key pressed. Click to try again. If Fn / Globe does nothing, set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings."
             }
         }
         .onDisappear {
