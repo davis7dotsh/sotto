@@ -87,5 +87,7 @@ final class SottoControllerKeyRecordingTests: XCTestCase {
         XCTAssertEqual(controller.activity, .idle, "A test take must not start during key capture")
         XCTAssertFalse(controller.isBusy)
         XCTAssertFalse(controller.isCapturing)
+        controller.startShortcutCheck()
+        XCTAssertFalse(controller.isCheckingShortcut, "A shortcut check against the suspended monitor would only record silence")
     }
 }

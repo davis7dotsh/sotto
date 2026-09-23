@@ -1118,7 +1118,8 @@ final class SottoController: ObservableObject {
     }
 
     func startShortcutCheck() {
-        guard !isBusy, !isCheckingShortcut else { return }
+        // The hold monitor is suspended while a key is being recorded.
+        guard !isBusy, !isCheckingShortcut, !isRecordingKey else { return }
         refreshPermissions()
         shortcutCheckStarted = ProcessInfo.processInfo.systemUptime
         shortcutCheckEntries = []
