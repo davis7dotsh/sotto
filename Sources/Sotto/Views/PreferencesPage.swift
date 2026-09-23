@@ -53,7 +53,6 @@ private struct DevicePreferencesForm: View {
                         if keyRecorder.isRecording {
                             Button("Cancel", action: stopKeyRecording)
                                 .buttonStyle(.borderless)
-                                .keyboardShortcut(.cancelAction)
                                 .accessibilityIdentifier("preferences.shortcut-cancel")
                         }
                         Button(action: keyRecorder.isRecording ? stopKeyRecording : startKeyRecording) {
@@ -72,7 +71,8 @@ private struct DevicePreferencesForm: View {
                         .accessibilityIdentifier("preferences.shortcut")
                         .accessibilityLabel(keyRecorder.isRecording
                             ? "Waiting for a key press"
-                            : "Dictation key, \(controller.shortcut.title). Click to change.")
+                            : "Dictation key, \(controller.shortcut.title)")
+                        .accessibilityHint(keyRecorder.isRecording ? "Cancels key recording" : "Records a new dictation key")
                     }
                 } label: {
                     Text("Dictation key")
@@ -151,6 +151,8 @@ private struct DevicePreferencesForm: View {
                 controller.setKeyRecording(false)
                 controller.shortcut = $0
             }
+            // The recorder consumes Escape itself while it is listening.
+            keyRecorder.onCancel = { controller.setKeyRecording(false) }
             keyRecorder.onTimeout = {
                 controller.setKeyRecording(false)
                 keyRecorderMessage = "No key pressed. Click to try again."

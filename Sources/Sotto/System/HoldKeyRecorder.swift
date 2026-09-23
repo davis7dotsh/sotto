@@ -4,25 +4,39 @@ import AppKit
 /// list. While recording, a local event monitor watches the supported
 /// modifiers; Sotto is frontmost, so the pressed key belongs to the user's
 /// intent. Only key-down edges capture: a modifier that was already held when
-/// recording started selects nothing when it is later released.
+/// recording started selects nothing when it is later released. Escape
+/// cancels recording.
+private let escapeKeyCode: UInt16 = 53
+
 @MainActor
 final class HoldKeyRecorder: ObservableObject {
     /// Recording stops itself after this long without a usable press.
     static let timeoutNanoseconds: UInt64 = 5_000_000_000
 
+    enum Input: Equatable {
+        case key(HoldKey, down: Bool)
+        case escape
+    }
+
     struct Environment {
-        var listen: (@escaping (HoldKey, Bool) -> Void) -> HotkeyCancellation
+        var listen: (@escaping (Input) -> Void) -> HotkeyCancellation
         var delay: (@escaping @MainActor () -> Void) -> HotkeyCancellation
 
         static var live: Self {
             Self(
                 listen: { handler in
                     let monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { event in
+                        // Consume Escape here so cancelling never depends on
+                        // which view in the window handles the exit command.
+                        if event.type == .keyDown, event.keyCode == escapeKeyCode {
+                            handler(.escape)
+                            return nil
+                        }
                         guard let cgEvent = event.cgEvent, let key = HoldKey(keyCode: event.keyCode) else { return event }
                         // Some keyboards report Fn/Globe as keyDown instead of
                         // flagsChanged; a keyDown for a modifier is always a press.
                         let isDown = event.type == .keyDown || key.isDown(in: cgEvent.flags)
-                        handler(key, isDown)
+                        handler(.key(key, down: isDown))
                         return event
                     }
                     return HotkeyCancellation { if let monitor { NSEvent.removeMonitor(monitor) } }
@@ -44,6 +58,7 @@ final class HoldKeyRecorder: ObservableObject {
     /// The captured key. Nil when recording stopped without a usable press.
     var onCapture: ((HoldKey) -> Void)?
     var onTimeout: (() -> Void)?
+    var onCancel: (() -> Void)?
 
     private let environment: Environment
     private var listener: HotkeyCancellation?
@@ -56,7 +71,7 @@ final class HoldKeyRecorder: ObservableObject {
     func start() {
         guard !isRecording else { return }
         isRecording = true
-        listener = environment.listen { [weak self] in self?.receive($0, down: $1) }
+        listener = environment.listen { [weak self] in self?.receive($0) }
         timeout = environment.delay { [weak self] in self?.timeOut() }
     }
 
@@ -69,10 +84,17 @@ final class HoldKeyRecorder: ObservableObject {
         timeout = nil
     }
 
-    func receive(_ key: HoldKey, down: Bool) {
-        guard isRecording, down else { return }
-        stop()
-        onCapture?(key)
+    func receive(_ input: Input) {
+        guard isRecording else { return }
+        switch input {
+        case let .key(key, down):
+            guard down else { return }
+            stop()
+            onCapture?(key)
+        case .escape:
+            stop()
+            onCancel?()
+        }
     }
 
     private func timeOut() {

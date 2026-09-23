@@ -14,10 +14,11 @@ private final class ScheduledRecorderCall {
 
 @MainActor
 private final class RecorderFixture {
-    var listener: (@MainActor (HoldKey, Bool) -> Void)?
+    var listener: (@MainActor (HoldKeyRecorder.Input) -> Void)?
     var delays: [ScheduledRecorderCall] = []
     var captured: [HoldKey] = []
     var timedOut = 0
+    var cancelled = 0
     lazy var recorder: HoldKeyRecorder = {
         let recorder = HoldKeyRecorder(environment: .init(
             listen: { [weak self] handler in
@@ -32,11 +33,13 @@ private final class RecorderFixture {
         ))
         recorder.onCapture = { [weak self] in self?.captured.append($0) }
         recorder.onTimeout = { [weak self] in self?.timedOut += 1 }
+        recorder.onCancel = { [weak self] in self?.cancelled += 1 }
         return recorder
     }()
 
-    func press(_ key: HoldKey) { listener?(key, true) }
-    func release(_ key: HoldKey) { listener?(key, false) }
+    func press(_ key: HoldKey) { listener?(.key(key, down: true)) }
+    func release(_ key: HoldKey) { listener?(.key(key, down: false)) }
+    func escape() { listener?(.escape) }
     func fireTimeout() { delays.first { !$0.cancelled }?.fire() }
 }
 
@@ -91,6 +94,21 @@ final class HoldKeyRecorderTests: XCTestCase {
         XCTAssertTrue(fixture.recorder.isRecording)
         fixture.press(.rightOption)
         XCTAssertEqual(fixture.captured, [.rightOption])
+    }
+
+    func testEscapeCancelsWithoutCaptureOrTimeout() {
+        let fixture = RecorderFixture()
+        fixture.recorder.start()
+        fixture.escape()
+        XCTAssertFalse(fixture.recorder.isRecording)
+        XCTAssertEqual(fixture.cancelled, 1)
+        XCTAssertNil(fixture.listener)
+        fixture.fireTimeout()
+        fixture.press(.rightOption)
+        fixture.escape()
+        XCTAssertEqual(fixture.timedOut, 0)
+        XCTAssertEqual(fixture.captured, [])
+        XCTAssertEqual(fixture.cancelled, 1)
     }
 
     func testStartWhileRecordingIsIdempotent() {
