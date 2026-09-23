@@ -137,7 +137,7 @@ final class SottoController: ObservableObject {
     var isBusy: Bool { activity.isBusy }
     var canCancelWithEscape: Bool { !hotkey.isHoldingFn }
     var isServerReady: Bool { serverHealth?.ready == true && serverHealth?.apiVersion == SottoAPI.version }
-    var canTest: Bool { isServerReady && permissions.microphone && microphones.resolution.device != nil && !isBusy }
+    var canTest: Bool { isServerReady && permissions.microphone && microphones.resolution.device != nil && !isBusy && !isRecordingKey }
     var selectedInputName: String { microphones.resolution.device?.name ?? "No microphone available" }
     var allPermissionsGranted: Bool { permissions.microphone && permissions.accessibility }
     var onHUDVisibility: ((Bool) -> Void)?
@@ -145,7 +145,8 @@ final class SottoController: ObservableObject {
 
     private let recorder = AudioRecorder()
     private let audioDevices = AudioDeviceStore()
-    private let hotkey = HotkeyMonitor()
+    private let hotkey: HotkeyMonitor
+    private let permissionCapture: () -> PermissionSnapshot
     private let inserter = TextInserter()
     private var subscriptions: Set<AnyCancellable> = []
     private var applyingConfiguration = false
@@ -184,14 +185,20 @@ final class SottoController: ObservableObject {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var lockObserver: NSObjectProtocol?
 
-    init(configuration: ConfigurationStore, startServices: Bool = true) {
+    /// Injectable for tests: a fixture hotkey and permission capture let the
+    /// suspension contract be exercised without real event taps or prompts.
+    init(configuration: ConfigurationStore, startServices: Bool = true,
+         hotkey: HotkeyMonitor? = nil,
+         permissionCapture: @escaping () -> PermissionSnapshot = PermissionSnapshot.capture) {
         self.configuration = configuration
+        self.hotkey = hotkey ?? HotkeyMonitor()
+        self.permissionCapture = permissionCapture
         preferences = ClientPreferencesStore(root: configuration.url.deletingLastPathComponent())
         microphones = MicrophonePreferencesStore(configuration: configuration)
-        permissions = startServices ? PermissionSnapshot.capture()
+        permissions = startServices ? permissionCapture()
             : PermissionSnapshot(microphone: false, accessibility: false, inputMonitoring: false)
         applyConfiguration(configuration.configuration)
-        hotkey.key = shortcut
+        self.hotkey.key = shortcut
         microphones.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &subscriptions)
         preferences.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &subscriptions)
         configuration.$configuration.removeDuplicates().sink { [weak self] in self?.applyConfiguration($0) }.store(in: &subscriptions)
@@ -649,7 +656,7 @@ final class SottoController: ObservableObject {
     }
 
     func toggleTestRecording() {
-        guard !hotkey.isHoldingFn else { return }
+        guard !hotkey.isHoldingFn, !isRecordingKey else { return }
         if isCapturing { finishDictation() }
         else if !isBusy { beginDictation(isTest: true) }
     }
@@ -776,7 +783,7 @@ final class SottoController: ObservableObject {
     }
 
     private func beginDictation(isTest: Bool) {
-        guard !isBusy, !isShuttingDown else { return }
+        guard !isBusy, !isShuttingDown, !isRecordingKey else { return }
         stopShortcutCheck()
         guard isServerReady else { showError(serverStatusMessage); refreshServer(); onShowWindow?(); return }
         guard permissions.microphone else { showError("Allow microphone access, then try again."); onShowWindow?(); return }
@@ -1055,14 +1062,35 @@ final class SottoController: ObservableObject {
         continuationAnchors.removeAll()
     }
     func refreshPermissions() {
-        let current = PermissionSnapshot.capture()
+        let current = permissionCapture()
         if current != permissions { permissions = current }
         audioDevices.refresh()
-        if permissions.canListenForHotkey {
+        if permissions.canListenForHotkey, !hotkeySuspendedForKeyRecording {
             isHotkeyActive = hotkey.start()
         } else {
             hotkey.stop()
             isHotkeyActive = false
+        }
+    }
+
+    /// While the user records a new hold key, the live monitor must not turn
+    /// that same press into dictation. Suspended until recording stops.
+    ///
+    /// Published so other capture entry points (the microphone test button,
+    /// the hold monitor itself) stay disabled while capture is active.
+    @Published private(set) var isRecordingKey = false
+    private var hotkeySuspendedForKeyRecording = false
+
+    func setKeyRecording(_ recording: Bool) {
+        guard hotkeySuspendedForKeyRecording != recording else { return }
+        hotkeySuspendedForKeyRecording = recording
+        isRecordingKey = recording
+        if recording {
+            stopShortcutCheck()
+            hotkey.stop()
+            isHotkeyActive = false
+        } else {
+            refreshPermissions()
         }
     }
 
@@ -1090,7 +1118,8 @@ final class SottoController: ObservableObject {
     }
 
     func startShortcutCheck() {
-        guard !isBusy, !isCheckingShortcut else { return }
+        // The hold monitor is suspended while a key is being recorded.
+        guard !isBusy, !isCheckingShortcut, !isRecordingKey else { return }
         refreshPermissions()
         shortcutCheckStarted = ProcessInfo.processInfo.systemUptime
         shortcutCheckEntries = []
