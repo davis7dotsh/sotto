@@ -15,6 +15,7 @@ private struct DevicePreferencesForm: View {
     @ObservedObject var preferences: ClientPreferencesStore
     @StateObject private var keyRecorder = HoldKeyRecorder()
     @State private var keyRecorderMessage: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var endpoint = ""
     @State private var token = ""
     @State private var deviceName = ""
@@ -39,50 +40,59 @@ private struct DevicePreferencesForm: View {
                         .disabled(controller.isBusy || endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .accessibilityIdentifier("preferences.connect")
                 }
-                SottoActionMessage(message: preferences.errorMessage ?? controller.errorMessage)
+                // Only take up a row when there is something to say; an empty
+                // reserved row reads as a layout gap under the status line.
+                if let message = preferences.errorMessage ?? controller.errorMessage {
+                    SottoActionMessage(message: message)
+                }
             } header: { Text("Connection").textCase(nil) }
 
             Section {
-                HStack {
-                    if keyRecorder.isRecording {
-                        Button("Cancel", role: .cancel) {
-                            keyRecorder.stop()
-                            controller.setKeyRecording(false)
-                        }
-                        .frame(width: 125)
-                        .accessibilityIdentifier("preferences.shortcut-cancel")
-                    } else {
-                        Button {
-                            keyRecorderMessage = nil
-                            controller.setKeyRecording(true)
-                            keyRecorder.start()
-                        } label: {
-                            Label(controller.shortcut.title, systemImage: "record.circle")
-                        }
-                        .frame(width: 125)
-                        .accessibilityIdentifier("preferences.shortcut")
-                        .accessibilityLabel("Record hold key. Currently \(controller.shortcut.title).")
-                    }
-                    Text(keyRecorder.isRecording
-                         ? "Press the key you want to hold to dictate."
-                         : "Click, then press \(HoldKey.allCases.map(\.title).joined(separator: ", ")).")
-                        .font(.caption)
-                        .foregroundStyle(SottoPalette.muted)
-                }
-                if let keyRecorderMessage { Text(keyRecorderMessage).font(.caption).foregroundStyle(SottoPalette.warning) }
                 LabeledContent {
-                    Button(controller.isCheckingShortcut ? "Stop checking" : "Check shortcut") {
+                    HStack(spacing: 8) {
+                        if keyRecorder.isRecording {
+                            Button("Cancel", action: stopKeyRecording)
+                                .buttonStyle(.borderless)
+                                .keyboardShortcut(.cancelAction)
+                                .accessibilityIdentifier("preferences.shortcut-cancel")
+                        }
+                        Button(action: keyRecorder.isRecording ? stopKeyRecording : startKeyRecording) {
+                            HStack(spacing: 6) {
+                                if keyRecorder.isRecording {
+                                    Image(systemName: "record.circle.fill")
+                                        .symbolEffect(.pulse, isActive: !reduceMotion)
+                                    Text("Press a key…")
+                                } else {
+                                    Text(controller.shortcut.symbol)
+                                    Text(controller.shortcut.title)
+                                }
+                            }
+                            .frame(minWidth: 109)
+                        }
+                        .accessibilityIdentifier("preferences.shortcut")
+                        .accessibilityLabel(keyRecorder.isRecording
+                            ? "Waiting for a key press"
+                            : "Dictation key, \(controller.shortcut.title). Click to change.")
+                    }
+                } label: {
+                    Text("Dictation key")
+                    Text(keyRecorderCaption)
+                        .foregroundStyle(keyRecorderMessage == nil ? SottoPalette.muted : SottoPalette.warning)
+                }
+                LabeledContent {
+                    Button {
                         if controller.isCheckingShortcut { controller.stopShortcutCheck() }
                         else { controller.startShortcutCheck(); showingDiagnostics = true }
+                    } label: {
+                        Text(controller.isCheckingShortcut ? "Stop checking" : "Check shortcut")
+                            .frame(minWidth: 109)
                     }
-                    .frame(width: 125)
                     // The hold monitor is suspended during key recording; a
                     // shortcut check against it would only produce silence.
                     .disabled(keyRecorder.isRecording)
                 } label: {
                     Text(controller.isCheckingShortcut ? "Hold the key for a second" : "Shortcut check")
                 }
-                if let note = controller.shortcut.note { Text(note).font(.caption).foregroundStyle(SottoPalette.muted) }
                 DisclosureGroup("Shortcut diagnostics", isExpanded: $showingDiagnostics) {
                     ScrollView {
                         Text(controller.shortcutCheckText.isEmpty ? "Run a shortcut check to see events." : controller.shortcutCheckText)
@@ -143,15 +153,32 @@ private struct DevicePreferencesForm: View {
             }
             keyRecorder.onTimeout = {
                 controller.setKeyRecording(false)
-                keyRecorderMessage = "Timed out. Click Record and press a key."
+                keyRecorderMessage = "No key pressed. Click to try again."
             }
         }
         .onDisappear {
-            if keyRecorder.isRecording {
-                keyRecorder.stop()
-                controller.setKeyRecording(false)
-            }
+            if keyRecorder.isRecording { stopKeyRecording() }
         }
+    }
+
+    private var keyRecorderCaption: String {
+        let keys = HoldKey.allCases.map(\.title)
+        let choices = keys.dropLast().joined(separator: ", ") + ", or " + (keys.last ?? "")
+        if keyRecorder.isRecording { return "Press \(choices). Esc cancels." }
+        if let keyRecorderMessage { return keyRecorderMessage }
+        let hint = "Click to change. Use \(choices)."
+        return controller.shortcut.note.map { "\(hint)\n\($0)" } ?? hint
+    }
+
+    private func startKeyRecording() {
+        keyRecorderMessage = nil
+        controller.setKeyRecording(true)
+        keyRecorder.start()
+    }
+
+    private func stopKeyRecording() {
+        keyRecorder.stop()
+        controller.setKeyRecording(false)
     }
 }
 
