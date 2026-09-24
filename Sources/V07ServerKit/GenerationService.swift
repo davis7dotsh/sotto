@@ -40,6 +40,11 @@ public actor GenerationService {
     private var wisprFlowIndex: [UUID: UUID] = [:]
     private var importStages: [UUID: ImportStage] = [:]
     private var uploads: [UUID: [AudioKind: Upload]] = [:]
+    private struct QueuedGeneration {
+        let id: UUID
+        let previous: DictationContinuation?
+    }
+    private var queue: [QueuedGeneration] = []
     private var activeID: UUID?
     private var activeTask: Task<Void, Never>?
     private var warmTask: Task<Void, Never>?
@@ -144,8 +149,10 @@ public actor GenerationService {
         stopping = true
         expiryTask?.cancel(); expiryTask = nil
         warmTask?.cancel(); warmTask = nil
-        activeTask?.cancel(); activeTask = nil
-        if let id = activeID { _ = try? await cancel(id) }
+        for id in records.values.filter({ !$0.status.isTerminal }).map(\.id) {
+            _ = try? await cancel(id)
+        }
+        queue.removeAll()
         await inference.shutdown()
         for group in subscribers.values { for continuation in group.values { continuation.finish() } }
         subscribers.removeAll()
@@ -154,11 +161,12 @@ public actor GenerationService {
     public func health() async -> ServerHealth {
         let state = await inference.readiness(proofreadingEnabled: false)
         let writable = FileManager.default.isWritableFile(atPath: configuration.dataDirectory.path) && (try? requireDiskSpace()) != nil
-        let ready = state.available && state.speechLoaded && writable
-        let message = !writable ? "Server storage is unavailable or full." : (activeID != nil ? "Server is handling a recording." :
-            (ready ? "Server ready." : (warming ? "Loading server models…" : "Server models are unavailable.")))
+        let ready = !stopping && state.available && writable
+        let message = stopping ? "The server is shutting down." : (!writable ? "Server storage is unavailable or full." :
+            (ready ? (state.speechLoaded ? "Server ready." : "Loading server models; recordings will queue.") :
+                (warming ? "Loading server models…" : "Server models are unavailable.")))
         if !state.speechLoaded, !warming, activeID == nil { beginWarmup() }
-        return ServerHealth(isDev: configuration.development, ready: ready && activeID == nil,
+        return ServerHealth(isDev: configuration.development, ready: ready,
             speech: ModelRuntimeInfo(modelID: "whisper-large-v3-turbo", backend: Self.speechBackend, ready: state.speechLoaded),
             proofreading: ModelRuntimeInfo(modelID: "Qwen3-4B-Instruct-2507", backend: Self.proofBackend,
                                            ready: state.proofLoaded, message: preferences.preferences.textCorrectionEnabled ?
@@ -188,21 +196,17 @@ public actor GenerationService {
             throw ServiceError(400, "invalid_device", "Device ID and name must be nonempty single-line text of at most 128 characters.")
         }
         if let existing = records.values.first(where: { $0.requestID == request.requestID && $0.device.id == request.device.id }) { return existing }
-        guard activeID == nil else { throw ServiceError(409, "server_busy", "The server is handling another recording. Try again when it finishes.") }
         let state = await inference.readiness(proofreadingEnabled: false)
         guard state.available else { beginWarmup(); throw ServiceError(503, "server_unavailable", state.message) }
-        guard state.speechLoaded else {
-            beginWarmup(); throw ServiceError(503, "server_warming", "The server is loading its models. Recording will be available when it is ready.")
-        }
-        // Readiness suspends the actor; admission must be checked again.
+        if !state.speechLoaded { beginWarmup() }
+        // Readiness suspends the actor; recheck shutdown and duplicate requests.
+        guard !stopping else { throw ServiceError(503, "server_stopping", "The server is shutting down.") }
         if let existing = records.values.first(where: { $0.requestID == request.requestID && $0.device.id == request.device.id }) { return existing }
-        guard activeID == nil else { throw ServiceError(409, "server_busy", "The server is handling another recording.") }
         try requireDiskSpace()
         let record = GenerationRecord(requestID: request.requestID, device: request.device, mode: request.mode, settings: preferences)
         try FileManager.default.createDirectory(at: directory(record.id), withIntermediateDirectories: false,
                                                 attributes: [.posixPermissions: 0o700])
         try save(record)
-        activeID = record.id
         uploads[record.id] = [:]
         return record
     }
@@ -289,12 +293,11 @@ public actor GenerationService {
             record.updatedAt = Date()
             do { try save(record) } catch { publish(record) }
             cleanPartial(id)
-            activeID = nil
-            beginWarmup()
             throw ServiceError(500, "audio_storage_failed", "The server could not preserve the complete recording.")
         }
         uploads[id] = nil
-        activeTask = Task { [weak self] in await self?.process(id, previous: previous) }
+        queue.append(QueuedGeneration(id: id, previous: previous))
+        processNext()
         return record
     }
 
@@ -348,10 +351,12 @@ public actor GenerationService {
         record.updatedAt = Date()
         do { try save(record) } catch { publish(record) }
         cleanPartial(id)
-        if activeID == id {
-            activeTask?.cancel()
-            await inference.cancel()
-            if activeID == id { activeTask = nil; activeID = nil; beginWarmup() }
+        queue.removeAll { $0.id == id }
+        if activeID == id, let task = activeTask {
+            // Native request cancellation is scoped to this task's operation ID.
+            // Wait for cleanup before the worker starts another generation.
+            task.cancel()
+            await task.value
         }
         return record
     }
@@ -695,9 +700,29 @@ public actor GenerationService {
         return WisprFlowDictionaryArchiveReceipt(byteCount: data.count, sha256: hash)
     }
 
+    private func processNext() {
+        guard !stopping, activeID == nil else { return }
+        guard !queue.isEmpty else { beginWarmup(); return }
+        let next = queue.removeFirst()
+        activeID = next.id
+        activeTask = Task { [weak self] in
+            await self?.process(next.id, previous: next.previous)
+        }
+    }
+
     private func process(_ id: UUID, previous: DictationContinuation?) async {
+        defer {
+            if activeID == id {
+                activeID = nil
+                activeTask = nil
+                processNext()
+            }
+        }
         do {
+            if let warmTask { await warmTask.value }
+            try Task.checkCancellation()
             var record = try get(id)
+            guard record.status == .queued else { return }
             let settings = record.settings.preferences
             record.status = .transcribing
             try save(record)
@@ -752,7 +777,6 @@ public actor GenerationService {
                 do { try save(record) } catch { publish(record) }
             }
         }
-        if activeID == id, records[id]?.status != .cancelled { activeID = nil; activeTask = nil; beginWarmup() }
     }
 
     private func proofread(_ text: String, settings: ServerPreferences, dictionaryChanged: Bool, language: String) async throws -> TextProcessingRecord {
@@ -1133,9 +1157,12 @@ public actor GenerationService {
         }
     }
     private func expireUploads() async {
-        guard let id = activeID, let record = records[id], record.status == .receiving,
-              Date().timeIntervalSince(record.updatedAt) > 45 || Date().timeIntervalSince(record.createdAt) > 300 else { return }
-        _ = try? await cancel(id)
+        let now = Date()
+        let expired = uploads.keys.filter { id in
+            guard let record = records[id], record.status == .receiving else { return false }
+            return now.timeIntervalSince(record.updatedAt) > 45 || now.timeIntervalSince(record.createdAt) > 300
+        }
+        for id in expired { _ = try? await cancel(id) }
     }
     private func beginWarmup() {
         guard !stopping, !warming, activeID == nil else { return }

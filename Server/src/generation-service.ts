@@ -163,9 +163,8 @@ export class GenerationService {
   private preferences: PreferencesSnapshot = defaultPreferences();
   private records = new Map<string, GenerationRecord>();
   private uploads = new Map<string, Partial<Record<AudioKind, Upload>>>();
-  private activeID?: string;
-  private activeController?: AbortController;
-  private processingTasks = new Set<Promise<void>>();
+  private processingControllers = new Map<string, AbortController>();
+  private processingQueue: Promise<void> = Promise.resolve();
   private warmController?: AbortController;
   private warmTask?: Promise<void>;
   private warming = false;
@@ -299,28 +298,29 @@ export class GenerationService {
       }
       await this.imports.expireImportStages();
     });
-    const stale = await this.mutate(() => {
-      const record = this.activeID ? this.records.get(this.activeID) : undefined;
-      return record?.status === "receiving" &&
-        (Date.now() - Date.parse(record.updatedAt) > 45_000 ||
-          Date.now() - Date.parse(record.createdAt) > 300_000)
-        ? record.id
-        : undefined;
+    await this.mutate(async () => {
+      for (const record of this.records.values()) {
+        if (
+          record.status === "receiving" &&
+          (Date.now() - Date.parse(record.updatedAt) > 45_000 ||
+            Date.now() - Date.parse(record.createdAt) > 300_000)
+        )
+          await this.cancelRecord(record.id);
+      }
     });
-    if (stale) await this.cancel(stale);
   }
   async shutdown() {
     this.stopping = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     this.warmController?.abort();
-    const id = await this.mutate(() => this.activeID);
-    if (id) await this.cancel(id).catch(() => {});
+    await this.mutate(async () => {
+      for (const record of this.records.values())
+        if (!terminal(record)) await this.cancelRecord(record.id);
+    });
     await this.inference.shutdown();
     await Promise.allSettled(
-      [...this.processingTasks, this.warmTask].filter((task): task is Promise<void> =>
-        Boolean(task),
-      ),
+      [this.processingQueue, this.warmTask].filter((task): task is Promise<void> => Boolean(task)),
     );
     await this.mutate(() => {
       for (const watchers of this.subscribers.values())
@@ -341,22 +341,24 @@ export class GenerationService {
       writable = false;
     }
     return this.mutate(() => {
-      const ready = state.available && state.speechLoaded && writable;
+      const ready = state.available && writable && !this.stopping;
       const message = !writable
         ? "Server storage is unavailable or full."
-        : this.activeID
-          ? "Server is handling a recording."
+        : this.stopping
+          ? "The server is shutting down."
           : ready
-            ? "Server ready."
+            ? state.speechLoaded
+              ? "Server ready."
+              : "Loading server models; recordings will queue."
             : this.warming
               ? "Loading server models…"
               : "Server models are unavailable.";
-      if (!state.speechLoaded && !this.warming && !this.activeID) this.beginWarmup();
+      if (!state.speechLoaded) this.beginWarmup();
       return {
         apiVersion: 1,
         serverVersion: "0.1.0",
         isDev: this.configuration.development,
-        ready: ready && !this.activeID,
+        ready,
         speech: {
           modelID: "whisper-large-v3-turbo",
           backend: this.speechBackend,
@@ -400,7 +402,7 @@ export class GenerationService {
         );
       await atomicPrivateWrite(join(this.configuration.dataDirectory, "preferences.json"), data);
       this.preferences = next;
-      if (!this.activeID) this.beginWarmup();
+      this.beginWarmup();
       return copy(next);
     });
   }
@@ -426,24 +428,11 @@ export class GenerationService {
           record.device.id === request.device.id,
       );
       if (existing) return copy(existing);
-      if (this.activeID)
-        throw new ServiceError(
-          409,
-          "server_busy",
-          "The server is handling another recording. Try again when it finishes.",
-        );
       if (!state.available) {
         this.beginWarmup();
         throw new ServiceError(503, "server_unavailable", state.message);
       }
-      if (!state.speechLoaded) {
-        this.beginWarmup();
-        throw new ServiceError(
-          503,
-          "server_warming",
-          "The server is loading its models. Recording will be available when it is ready.",
-        );
-      }
+      if (!state.speechLoaded) this.beginWarmup();
       await requireDiskSpace(this.configuration.dataDirectory);
       const record = this.newRecord(
         uuid(),
@@ -454,7 +443,6 @@ export class GenerationService {
       );
       await mkdir(this.directory(record.id), { mode: 0o700 });
       await this.save(record);
-      this.activeID = record.id;
       this.uploads.set(record.id, {});
       return copy(record);
     });
@@ -699,20 +687,11 @@ export class GenerationService {
         record.updatedAt = now();
         await this.save(record).catch(() => this.publish(record));
         await this.cleanPartial(id);
-        this.activeID = undefined;
         this.beginWarmup();
         throw new ServiceError(500, "audio_storage_failed", record.error);
       }
       this.uploads.delete(id);
-      const controller = new AbortController();
-      this.activeController = controller;
-      // Queueing defers the first process mutation until this finish commit completes.
-      // Cancellation releases admission before a helper finishes unwinding.
-      // Retain every processing task until its queued catch/finally work completes.
-      const task = this.process(id, previous, controller.signal).finally(() => {
-        this.processingTasks.delete(task);
-      });
-      this.processingTasks.add(task);
+      this.enqueueProcessing(id, previous);
       return copy(record);
     });
   }
@@ -805,32 +784,20 @@ export class GenerationService {
     return iterator;
   }
 
-  async cancel(id: string) {
-    const cancelled = await this.mutate(async () => {
-      const record = this.getInternal(id);
-      id = record.id;
-      if (terminal(record)) return { record, active: false };
-      record.status = "cancelled";
-      record.error = "Recording cancelled.";
-      delete record.progress;
-      record.updatedAt = now();
-      await this.save(record).catch(() => this.publish(record));
-      await this.cleanPartial(id);
-      const active = this.activeID === id;
-      if (active) this.activeController?.abort();
-      return { record: copy(record), active };
-    });
-    if (cancelled.active) {
-      await this.inference.cancel();
-      await this.mutate(() => {
-        if (this.activeID === id) {
-          this.activeID = undefined;
-          this.activeController = undefined;
-          this.beginWarmup();
-        }
-      });
-    }
-    return cancelled.record;
+  cancel(id: string) {
+    return this.mutate(() => this.cancelRecord(id));
+  }
+  private async cancelRecord(id: string) {
+    const record = this.getInternal(id);
+    if (terminal(record)) return record;
+    record.status = "cancelled";
+    record.error = "Recording cancelled.";
+    delete record.progress;
+    record.updatedAt = now();
+    this.processingControllers.get(record.id)?.abort();
+    await this.save(record).catch(() => this.publish(record));
+    await this.cleanPartial(record.id);
+    return copy(record);
   }
   recordDelivery(id: string, receipt: DeliveryReceipt) {
     return this.mutate(async () => {
@@ -1036,6 +1003,24 @@ export class GenerationService {
       return;
     return copy(previous.continuation);
   }
+  private enqueueProcessing(id: string, previous: DictationContinuation | undefined) {
+    const controller = new AbortController();
+    this.processingControllers.set(id, controller);
+    // A sealed recording waits for all earlier processing and cancellation cleanup.
+    // Uploads and subscribers remain independent of this inference-only queue.
+    this.processingQueue = this.processingQueue
+      .then(async () => {
+        if (this.stopping || controller.signal.aborted) return;
+        await this.warmTask;
+        if (!this.stopping && !controller.signal.aborted)
+          await this.process(id, previous, controller.signal);
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.processingControllers.delete(id);
+        this.beginWarmup();
+      });
+  }
   private async process(
     id: string,
     previous: DictationContinuation | undefined,
@@ -1143,16 +1128,9 @@ export class GenerationService {
         delete failed.progress;
         await this.save(failed).catch(() => this.publish(failed));
       });
-    } finally {
-      await this.mutate(() => {
-        if (this.activeID === id && this.records.get(id)?.status !== "cancelled") {
-          this.activeID = undefined;
-          this.activeController = undefined;
-          this.beginWarmup();
-        }
-      });
     }
   }
+
   private async proofread(
     text: string,
     settings: ServerPreferences,
@@ -1256,7 +1234,7 @@ export class GenerationService {
       await rm(join(this.directory(id), name), { force: true }).catch(() => {});
   }
   private beginWarmup() {
-    if (this.stopping || this.warming || this.activeID) return;
+    if (this.stopping || this.warming || this.processingControllers.size) return;
     this.warming = true;
     const controller = new AbortController();
     this.warmController = controller;

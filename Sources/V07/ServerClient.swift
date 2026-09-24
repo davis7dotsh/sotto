@@ -98,7 +98,8 @@ struct ServerClient: Sendable {
             } else {
                 switch response.statusCode {
                 case 401, 403: message = "The server credential was rejected. Update it in Preferences."
-                case 409, 429: message = "The server is busy. Wait for the current recording to finish."
+                case 409: message = "The recording changed before the request could finish."
+                case 429: message = "The server has reached its capacity. Try again shortly."
                 case 503: message = "The server is online but its models are not ready."
                 default: message = "The server could not complete the request (HTTP \(response.statusCode))."
                 }
@@ -223,10 +224,26 @@ extension ServerClient {
     }
     func generation(_ id: UUID) async throws -> GenerationRecord { try await json(path: "v1/generations/\(id)") }
     func create(_ value: CreateGenerationRequest) async throws -> GenerationRecord {
-        try await json(path: "v1/generations", method: "POST", body: Self.encode(value))
+        // A released hold can cancel startup while the server is accepting this
+        // request. Keep its response alive so the caller can cancel the returned
+        // generation instead of abandoning a receiving session without its ID.
+        try await Task {
+            let record: GenerationRecord = try await json(
+                path: "v1/generations", method: "POST", body: Self.encode(value))
+            return record
+        }.value
     }
     func finish(_ id: UUID, value: FinishGenerationRequest) async throws -> GenerationRecord {
-        try await json(path: "v1/generations/\(id)/finish", method: "POST", body: Self.encode(value))
+        let body = try Self.encode(value)
+        do { return try await json(path: "v1/generations/\(id)/finish", method: "POST", body: body) }
+        catch {
+            try Task.checkCancellation()
+            guard Self.isTransient(error) else { throw error }
+            // Sealing is idempotent for these exact frame counts. Recover a lost
+            // acknowledgement without abandoning the take's eventual delivery.
+            try await Task.sleep(for: .milliseconds(250))
+            return try await json(path: "v1/generations/\(id)/finish", method: "POST", body: body)
+        }
     }
     func cancel(_ id: UUID) async throws {
         try await send(path: "v1/generations/\(id)/cancel", method: "POST")
@@ -264,6 +281,50 @@ extension ServerClient {
     }
 
     func events(_ id: UUID, onUpdate: @escaping @Sendable (GenerationRecord) async -> Void) async throws -> GenerationRecord {
+        var recoveryFailures = 0
+        while true {
+            try Task.checkCancellation()
+            do { return try await readEvents(id, onUpdate: onUpdate) }
+            catch {
+                try Task.checkCancellation()
+                guard Self.isTransient(error) else { throw error }
+            }
+            // A queue can outlive URLSession's request/resource timeout. Read
+            // the durable record before reconnecting; a completed result must
+            // still be delivered even if its final stream frame was lost.
+            do {
+                let record = try await generation(id)
+                guard record.id == id else { throw ServerClientError.invalidResponse }
+                try Task.checkCancellation()
+                await onUpdate(record)
+                if record.status.isTerminal { return record }
+                recoveryFailures = 0
+            } catch {
+                try Task.checkCancellation()
+                guard Self.isTransient(error) else { throw error }
+                recoveryFailures += 1
+                guard recoveryFailures < 5 else { throw error }
+            }
+            try await Task.sleep(for: .seconds(min(8, 1 << recoveryFailures)))
+        }
+    }
+
+    private static func isTransient(_ error: Error) -> Bool {
+        if let error = error as? URLError {
+            return [.timedOut, .networkConnectionLost, .notConnectedToInternet,
+                    .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed].contains(error.code)
+        }
+        if let error = error as? ServerClientError {
+            switch error {
+            case .disconnected: return true
+            case .rejected(let status, _): return [408, 429, 502, 503, 504].contains(status)
+            default: return false
+            }
+        }
+        return false
+    }
+
+    private func readEvents(_ id: UUID, onUpdate: @escaping @Sendable (GenerationRecord) async -> Void) async throws -> GenerationRecord {
         var request = try request(path: "v1/generations/\(id)/events")
         request.setValue("application/x-ndjson", forHTTPHeaderField: "Accept")
         let (bytes, response) = try await session.bytes(for: request)

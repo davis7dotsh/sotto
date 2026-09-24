@@ -92,15 +92,13 @@ async function upload(service: GenerationService) {
   return record;
 }
 
-test("serializes admission; repeated requests return same frozen generation", async () => {
+test("repeated requests return the same frozen generation while new recordings are accepted", async () => {
   const { service } = await setup(),
     input = request();
   const [a, b] = await Promise.all([service.create(input), service.create(input)]);
   expect(a.id).toBe(b.id);
-  await expect(service.create(request())).rejects.toMatchObject({
-    status: 409,
-    code: "server_busy",
-  });
+  expect((await service.create(request())).id).not.toBe(a.id);
+  expect((await service.health()).ready).toBe(true);
   const preferences = await service.getPreferences();
   preferences.preferences.language = "es";
   await service.updatePreferences(preferences);
@@ -109,11 +107,14 @@ test("serializes admission; repeated requests return same frozen generation", as
     code: "stale_preferences",
   });
 });
-test("concurrent competing creates have one winner", async () => {
-  const { service } = await setup(),
-    result = await Promise.allSettled([service.create(request()), service.create(request())]);
-  expect(result.filter((item) => item.status === "fulfilled")).toHaveLength(1);
-  expect(result.filter((item) => item.status === "rejected")).toHaveLength(1);
+test("concurrent recordings have independent upload streams", async () => {
+  const { service } = await setup();
+  const records = await Promise.all(Array.from({ length: 4 }, () => upload(service)));
+  expect(new Set(records.map((record) => record.id)).size).toBe(4);
+  expect((await service.health()).ready).toBe(true);
+  await Promise.all(records.map((record) => service.finish(record.id, { inferenceFrames: 4000 })));
+  const results = await Promise.all(records.map((record) => completed(service, record.id)));
+  expect(results.map((record) => record.status)).toEqual(Array(4).fill("completed"));
 });
 test("chunk ordering, finite samples, byte-identical replay and format restrictions", async () => {
   const { service } = await setup(),
@@ -183,7 +184,7 @@ test("proofreading failure preserves deterministic transcript", async () => {
   expect(final.finalText).toBe("Hello Codex.");
   expect(final.textProcessing?.status).toBe("failed");
 });
-test("cancel frees admission and wakes terminal subscribers", async () => {
+test("cancel wakes only that recording’s terminal subscribers", async () => {
   const { service, inference } = await setup();
   inference.blocked = true;
   const record = await upload(service);
@@ -320,14 +321,17 @@ test("list continuations carry only confirmed compatible device context", async 
   expect((await completed(service, other.id)).finalText).not.toBe("4. oranges");
 });
 
-test("idle upload expiry cancels receiving generation without blocking new admission", async () => {
-  const { service } = await setup(),
-    record = await service.create(request());
+test("idle upload expiry cancels every stale receiver and preserves a fresh recording", async () => {
+  const { service } = await setup();
+  const stale = await Promise.all([upload(service), upload(service)]);
   service.start();
   try {
     setSystemTime(new Date(Date.now() + 46_000));
-    expect((await completed(service, record.id)).status).toBe("cancelled");
-    expect((await service.create(request())).status).toBe("receiving");
+    const fresh = await upload(service);
+    const expired = await Promise.all(stale.map((record) => completed(service, record.id)));
+    expect(expired.map((record) => record.status)).toEqual(["cancelled", "cancelled"]);
+    expect((await service.get(fresh.id)).status).toBe("receiving");
+    expect((await service.health()).ready).toBe(true);
   } finally {
     setSystemTime();
   }
@@ -442,3 +446,184 @@ for (const retired of [false, true]) {
     },
   );
 }
+
+class QueuedInference extends FakeInference {
+  calls: string[] = [];
+  signals: (AbortSignal | undefined)[] = [];
+  starts = Array.from({ length: 4 }, deferred);
+  releases = Array.from({ length: 4 }, deferred);
+  failFirst = false;
+  cold = false;
+  proofStarted = deferred();
+  proofRelease?: ReturnType<typeof deferred>;
+  override readiness() {
+    return super.readiness().then((state) => ({ ...state, speechLoaded: !this.cold }));
+  }
+  override async transcribe(
+    path: string,
+    _language: string,
+    _terms: string[],
+    _progress?: (value: number) => void,
+    signal?: AbortSignal,
+  ) {
+    const index = this.calls.length;
+    this.calls.push(path);
+    this.signals.push(signal);
+    this.starts[index]!.release();
+    // Deliberately hold cleanup after abort to detect overlapping replacement work.
+    await this.releases[index]!.promise;
+    signal?.throwIfAborted();
+    if (this.failFirst && index === 0) throw new Error("Speech helper failed.");
+    return {
+      text: `Recording ${index + 1}.`,
+      language: "en",
+      processingSeconds: 0.1,
+      audioSeconds: 0.25,
+      engineVersion: "fixture",
+    };
+  }
+  override async correct(text: string) {
+    this.proofStarted.release();
+    await this.proofRelease?.promise;
+    return super.correct(text);
+  }
+  override async cancel() {
+    throw new Error("Per-record cancellation must not cancel the entire backend.");
+  }
+  override shutdown() {
+    this.proofRelease?.release();
+    for (const release of this.releases) release.release();
+    return super.shutdown();
+  }
+}
+
+test("finished recordings run FIFO, remain ready, and deliver only to their own subscribers", async () => {
+  const inference = new QueuedInference();
+  const { service, path } = await setup(inference);
+  const [first, second, third] = await Promise.all(
+    Array.from({ length: 3 }, () => upload(service)),
+  );
+  const results = [second!, first!, third!].map((record) => completed(service, record.id));
+  await service.finish(second!.id, { inferenceFrames: 4000 });
+  await inference.starts[0]!.promise;
+  await service.finish(first!.id, { inferenceFrames: 4000 });
+  await service.finish(third!.id, { inferenceFrames: 4000 });
+  await service.finish(first!.id, { inferenceFrames: 4000 });
+  expect((await service.get(first!.id)).status).toBe("queued");
+  expect((await service.get(third!.id)).status).toBe("queued");
+  expect((await service.health()).ready).toBe(true);
+  expect((await service.create(request())).status).toBe("receiving");
+  expect(inference.calls).toEqual([join(path, "generations", second!.id, "inference.wav")]);
+  for (let index = 0; index < results.length; index++) {
+    inference.releases[index]!.release();
+    const result = await results[index]!;
+    expect(result.id).toBe([second!, first!, third!][index]!.id);
+    expect(result.status).toBe("completed");
+    expect(result.finalText).toBe(`Recording ${index + 1}.`);
+    if (index + 1 < results.length) await inference.starts[index + 1]!.promise;
+  }
+  expect(inference.calls).toEqual(
+    [second!, first!, third!].map((record) =>
+      join(path, "generations", record.id, "inference.wav"),
+    ),
+  );
+});
+
+test("cancelling receiving and queued recordings leaves active inference alone; active cleanup precedes the next job", async () => {
+  const inference = new QueuedInference();
+  const { service, path } = await setup(inference);
+  const first = await upload(service);
+  await service.finish(first.id, { inferenceFrames: 4000 });
+  await inference.starts[0]!.promise;
+  const queued = await upload(service);
+  await service.finish(queued.id, { inferenceFrames: 4000 });
+  const receiving = await upload(service);
+  const next = await upload(service);
+  await service.finish(next.id, { inferenceFrames: 4000 });
+  expect((await service.cancel(receiving.id)).status).toBe("cancelled");
+  expect((await service.cancel(queued.id)).status).toBe("cancelled");
+  expect(inference.signals[0]!.aborted).toBe(false);
+  expect((await service.cancel(first.id)).status).toBe("cancelled");
+  expect(inference.signals[0]!.aborted).toBe(true);
+  await service.delete(queued.id);
+  await Bun.sleep(0);
+  expect(inference.calls).toHaveLength(1);
+  expect((await service.get(next.id)).status).toBe("queued");
+  inference.releases[0]!.release();
+  await inference.starts[1]!.promise;
+  expect(inference.calls[1]).toBe(join(path, "generations", next.id, "inference.wav"));
+  inference.releases[1]!.release();
+  expect((await completed(service, next.id)).status).toBe("completed");
+  expect((await service.get(first.id)).status).toBe("cancelled");
+  expect((await service.health()).ready).toBe(true);
+});
+
+test("a failed speech job does not strand the next queued recording", async () => {
+  const inference = new QueuedInference();
+  inference.failFirst = true;
+  const { service } = await setup(inference);
+  const first = await upload(service);
+  await service.finish(first.id, { inferenceFrames: 4000 });
+  await inference.starts[0]!.promise;
+  const next = await upload(service);
+  await service.finish(next.id, { inferenceFrames: 4000 });
+  inference.releases[0]!.release();
+  expect((await completed(service, first.id)).status).toBe("failed");
+  await inference.starts[1]!.promise;
+  inference.releases[1]!.release();
+  expect((await completed(service, next.id)).status).toBe("completed");
+});
+
+test("verified available models accept recordings while their helper reloads", async () => {
+  const inference = new QueuedInference();
+  inference.cold = true;
+  const { service } = await setup(inference);
+  const health = await service.health();
+  expect(health.ready).toBe(true);
+  expect(health.speech.ready).toBe(false);
+  const record = await upload(service);
+  await service.finish(record.id, { inferenceFrames: 4000 });
+  await inference.starts[0]!.promise;
+  inference.releases[0]!.release();
+  expect((await completed(service, record.id)).status).toBe("completed");
+});
+
+test("shutdown cancels every receiving and queued recording without starting another inference", async () => {
+  const inference = new QueuedInference();
+  const { service } = await setup(inference);
+  const first = await upload(service);
+  await service.finish(first.id, { inferenceFrames: 4000 });
+  await inference.starts[0]!.promise;
+  const queued = await upload(service);
+  await service.finish(queued.id, { inferenceFrames: 4000 });
+  const receiving = await upload(service);
+  const results = [first, queued, receiving].map((record) => completed(service, record.id));
+  await service.shutdown();
+  expect((await Promise.all(results)).map((record) => record.status)).toEqual(
+    Array(3).fill("cancelled"),
+  );
+  expect(inference.calls).toHaveLength(1);
+  expect((await service.health()).ready).toBe(false);
+  await expect(service.create(request())).rejects.toMatchObject({ code: "server_stopping" });
+});
+
+test("the next recording waits until proofreading and result publication finish", async () => {
+  const inference = new QueuedInference();
+  inference.proofRelease = deferred();
+  const { service } = await setup(inference);
+  const first = await upload(service);
+  await service.finish(first.id, { inferenceFrames: 4000 });
+  await inference.starts[0]!.promise;
+  inference.releases[0]!.release();
+  await inference.proofStarted.promise;
+  const second = await upload(service);
+  await service.finish(second.id, { inferenceFrames: 4000 });
+  expect((await service.get(first.id)).status).toBe("proofreading");
+  expect((await service.get(second.id)).status).toBe("queued");
+  expect(inference.calls).toHaveLength(1);
+  inference.proofRelease.release();
+  await inference.starts[1]!.promise;
+  expect((await service.get(first.id)).status).toBe("completed");
+  inference.releases[1]!.release();
+  expect((await completed(service, second.id)).status).toBe("completed");
+});

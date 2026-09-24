@@ -94,7 +94,7 @@ From the repository root, with the models installed above:
 
 On Linux, replace the last path with the GGUF file. Add `--dev` for a development label in health responses. If using the packaged distribution elsewhere, point helper/resource paths at that package and choose durable model/data paths.
 
-Check `curl http://localhost:8391/v1/health`; HTTP reachability alone does not mean the models are ready. The `ready` field means the server can accept a recording. Quitting a client does not stop this process. Use launchd, systemd, or container supervision for boot/restart behavior; the scripts do not install a service.
+Check `curl http://localhost:8391/v1/health`; HTTP reachability alone does not mean inference is available. The `ready` field means the server can accept a recording, including while other recordings are uploading or processing. Finished uploads queue for serial inference; model runtime fields separately report whether helpers are loaded. Quitting a client does not stop this process. Use launchd, systemd, or container supervision for boot/restart behavior; the scripts do not install a service.
 
 For server-only development alongside an installed V07 instance, use `--port 8392 --data-dir "$PWD/.local/typescript-server" --dev` with your helper/model arguments. Start the executable directly or use `bun run dev:server` with those arguments. The client dev runner starts the app and defaults to port 8391; avoid it when preserving a running installation.
 

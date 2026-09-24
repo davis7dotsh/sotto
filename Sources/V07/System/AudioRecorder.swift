@@ -161,12 +161,21 @@ final class AudioRecorder {
     }
 
     func stop() async throws -> CapturedAudio {
-        guard let current = request else { throw AudioRecordingError.notRecording }
+        let stopped = stopCapture()
+        return try await withTaskCancellationHandler {
+            try await stopped.value
+        } onCancel: { stopped.cancel() }
+    }
+
+    /// Transfer the released request synchronously, before a new hold or cancel
+    /// can reach this recorder. The returned task owns only this take's teardown.
+    func stopCapture() -> Task<CapturedAudio, Error> {
+        guard let current = request else { return Task { throw AudioRecordingError.notRecording } }
         current.release()
         request = nil
         removeSleepObserver()
         onLevel?(0)
-        return try await worker.stop(request: current)
+        return Task { try await worker.stop(request: current) }
     }
 
     func cancel() {

@@ -134,25 +134,30 @@ final class V07Controller: ObservableObject {
     var isRecording: Bool { activity == .recording }
     var isCapturing: Bool { activity.isCapturing }
     var recordingUsesClipboard: Bool { isCapturing && insertionDestination == .clipboard }
-    var isBusy: Bool { activity.isBusy }
+    var isBusy: Bool { activity.isBusy || !pendingDictations.isEmpty }
     var canCancelWithEscape: Bool { !hotkey.isHoldingFn }
     var isServerReady: Bool { serverHealth?.ready == true && serverHealth?.apiVersion == V07API.version }
-    var canTest: Bool { isServerReady && permissions.microphone && microphones.resolution.device != nil && !isBusy }
+    var canTest: Bool { isServerReady && permissions.microphone && microphones.resolution.device != nil && !isCapturing }
     var selectedInputName: String { microphones.resolution.device?.name ?? "No microphone available" }
     var allPermissionsGranted: Bool { permissions.microphone && permissions.accessibility }
     var onHUDVisibility: ((Bool) -> Void)?
     var onShowWindow: (() -> Void)?
 
-    private let recorder = AudioRecorder()
-    private let audioDevices = AudioDeviceStore()
+    private let recorder: AudioRecorder
+    private let audioDevices: AudioDeviceStore
+    private let serverClientFactory: (() throws -> ServerClient)?
     private let hotkey = HotkeyMonitor()
-    private let inserter = TextInserter()
     private var subscriptions: Set<AnyCancellable> = []
     private var applyingConfiguration = false
     private var recordingTimer: Timer?
     private var recordingStart: TimeInterval = 0
     private var microphoneStartTask: Task<Void, Never>?
-    private var transcriptionTask: Task<Void, Never>?
+    private var recorderStopTask: Task<CapturedAudio, Error>?
+    private var deliveryTail: Task<Void, Never>?
+    private var deliveryWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var insertionRebases = ConfirmedInsertionRebases<InsertionTarget>()
+    @Published private var pendingDictations: [UUID: PendingDictation] = [:]
+    private var pendingDictationOrder: [UUID] = []
     private var uploadTask: Task<FinishGenerationRequest, Error>?
     private var uploadPipe: AudioChunkPipe?
     private var refreshTask: Task<Void, Never>?
@@ -165,7 +170,26 @@ final class V07Controller: ObservableObject {
     private var sessionID = UUID()
     private var activeGenerationID: UUID?
     private var activeClient: ServerClient?
-    private var serverSealed = false
+    @MainActor
+    private final class PendingDictation {
+        let id: UUID
+        let client: ServerClient
+        let upload: Task<FinishGenerationRequest, Error>
+        let pipe: AudioChunkPipe
+        let destination: InsertionDestinationCapture?
+        var task: Task<Void, Never>?
+        var sealed = false
+
+        init(id: UUID, client: ServerClient, upload: Task<FinishGenerationRequest, Error>,
+             pipe: AudioChunkPipe, destination: InsertionDestinationCapture?) {
+            self.id = id; self.client = client; self.upload = upload
+            self.pipe = pipe; self.destination = destination
+        }
+
+        func cancel() {
+            task?.cancel(); upload.cancel(); pipe.cancel(); destination?.cancel()
+        }
+    }
     @Published private var insertionDestination: InsertionDestination?
     private var destinationTask: InsertionDestinationCapture?
     private var recordingClipboardChangeCount = 0
@@ -184,8 +208,13 @@ final class V07Controller: ObservableObject {
     private var workspaceObservers: [NSObjectProtocol] = []
     private var lockObserver: NSObjectProtocol?
 
-    init(configuration: ConfigurationStore, startServices: Bool = true) {
+    init(configuration: ConfigurationStore, startServices: Bool = true,
+         recorder: AudioRecorder? = nil, audioDevices: AudioDeviceStore? = nil,
+         serverClient: (() throws -> ServerClient)? = nil) {
         self.configuration = configuration
+        self.recorder = recorder ?? AudioRecorder()
+        self.audioDevices = audioDevices ?? AudioDeviceStore()
+        self.serverClientFactory = serverClient
         preferences = ClientPreferencesStore(root: configuration.url.deletingLastPathComponent())
         microphones = MicrophonePreferencesStore(configuration: configuration)
         permissions = startServices ? PermissionSnapshot.capture()
@@ -197,7 +226,7 @@ final class V07Controller: ObservableObject {
         configuration.$configuration.removeDuplicates().sink { [weak self] in self?.applyConfiguration($0) }.store(in: &subscriptions)
         guard startServices else { return }
         bindServices()
-        audioDevices.start()
+        self.audioDevices.start()
         installLifecycleObservers()
         refreshPermissions()
         // Capture files are temporary only; server history is never examined here.
@@ -226,7 +255,7 @@ final class V07Controller: ObservableObject {
     }
 
     private func client() throws -> ServerClient {
-        try ServerClient(endpoint: preferences.endpoint, token: preferences.token)
+        try serverClientFactory?() ?? ServerClient(endpoint: preferences.endpoint, token: preferences.token)
     }
 
     func refreshServer() {
@@ -651,30 +680,35 @@ final class V07Controller: ObservableObject {
     func toggleTestRecording() {
         guard !hotkey.isHoldingFn else { return }
         if isCapturing { finishDictation() }
-        else if !isBusy { beginDictation(isTest: true) }
+        else { beginDictation(isTest: true) }
     }
 
     func cancelDictation() {
         guard isBusy else { return }
-        let generation = activeGenerationID
-        let connection = activeClient
-        resetSession()
-        activity = .idle
-        statusMessage = "Cancelled"
-        errorMessage = nil
-        onHUDVisibility?(false)
-        if let generation, let connection {
-            Task { [weak self] in
-                try? await connection.cancel(generation)
-                self?.refreshServer()
-            }
+        if isCapturing {
+            let generation = activeGenerationID
+            let connection = activeClient
+            resetSession()
+            if let generation, let connection { Task { try? await connection.cancel(generation) } }
+        } else if let cancelled = pendingDictations[sessionID] != nil ? sessionID : pendingDictationOrder.last,
+                  let pending = pendingDictations.removeValue(forKey: cancelled) {
+            pendingDictationOrder.removeAll { $0 == cancelled }
+            pending.cancel()
+            Task { try? await pending.client.cancel(pending.id) }
         }
+        let remaining = pendingDictationOrder.last
+        sessionID = remaining ?? UUID()
+        activity = remaining == nil ? .idle : .transcribing
+        resumeDeliveryWaiters()
+        statusMessage = remaining == nil ? "Cancelled" : "Cancelled · Earlier dictation is still processing"
+        errorMessage = nil
+        onHUDVisibility?(remaining != nil)
+        refreshServer()
     }
 
     private func resetSession() {
         sessionID = UUID()
         microphoneStartTask?.cancel(); microphoneStartTask = nil
-        transcriptionTask?.cancel(); transcriptionTask = nil
         uploadPipe?.cancel(); uploadPipe = nil
         uploadTask?.cancel(); uploadTask = nil
         destinationTask?.cancel(); destinationTask = nil
@@ -686,7 +720,6 @@ final class V07Controller: ObservableObject {
         recordingInputName = nil
         activeGenerationID = nil
         activeClient = nil
-        serverSealed = false
         recordingFeedback.reset()
     }
 
@@ -695,6 +728,7 @@ final class V07Controller: ObservableObject {
         let connection = activeClient
         resetSession()
         showError(message)
+        resumeDeliveryWaiters()
         if cancelServer, let generation, let connection { Task { try? await connection.cancel(generation) } }
         refreshHistory()
     }
@@ -739,9 +773,9 @@ final class V07Controller: ObservableObject {
         // generation remains independently owned and may complete in history.
         let generation = activeGenerationID
         let connection = activeClient
-        let shouldCancel = !serverSealed
         resetSession()
-        if shouldCancel, let generation, let connection { Task { try? await connection.cancel(generation) } }
+        if let generation, let connection { Task { try? await connection.cancel(generation) } }
+        stopPendingDictations()
         monitorTask?.cancel(); refreshTask?.cancel(); hudTask?.cancel(); permissionTask?.cancel()
         configuration.stopWatching()
         subscriptions.removeAll()
@@ -766,6 +800,7 @@ final class V07Controller: ObservableObject {
             guard let self else { return }
             if isCheckingShortcut { appendShortcutCheck("Hold released."); return }
             if !isTestSession { finishDictation() }
+            resumeDeliveryWaiters()
         }
         hotkey.onCancel = { [weak self] in
             guard let self else { return }
@@ -776,7 +811,7 @@ final class V07Controller: ObservableObject {
     }
 
     private func beginDictation(isTest: Bool) {
-        guard !isBusy, !isShuttingDown else { return }
+        guard !isCapturing, !isShuttingDown else { return }
         stopShortcutCheck()
         guard isServerReady else { showError(serverStatusMessage); refreshServer(); onShowWindow?(); return }
         guard permissions.microphone else { showError("Allow microphone access, then try again."); onShowWindow?(); return }
@@ -784,10 +819,10 @@ final class V07Controller: ObservableObject {
             showError("No microphone is available. Connect an input and try again."); onShowWindow?(); return
         }
         hudTask?.cancel(); errorMessage = nil
+        if pendingDictations.isEmpty { insertionRebases.removeAll() }
         sessionID = UUID()
         let current = sessionID
         isTestSession = isTest
-        serverSealed = false
         recordingClipboardChangeCount = NSPasteboard.general.changeCount
         insertionDestination = nil
         recordingInputName = input.name
@@ -821,8 +856,10 @@ final class V07Controller: ObservableObject {
                 sharedPreferences = created.settings
                 let pipe = AudioChunkPipe { [weak self] error in
                     Task { @MainActor [weak self] in
-                        guard let self, sessionID == current else { return }
-                        failSession(error.localizedDescription, cancelServer: true)
+                        guard let self else { return }
+                        if sessionID == current, isCapturing {
+                            failSession(error.localizedDescription, cancelServer: true)
+                        }
                     }
                 }
                 uploadPipe = pipe
@@ -830,12 +867,16 @@ final class V07Controller: ObservableObject {
                 uploadTask = Task { [weak self] in
                     do { return try await connection.upload(pipe.stream, to: created.id, preserveOriginal: created.settings.preferences.keepOriginalAudio) }
                     catch {
-                        if let self, sessionID == current, !Task.isCancelled {
+                        if let self, sessionID == current, isCapturing, !Task.isCancelled {
                             failSession(Self.connectionMessage(error), cancelServer: true)
                         }
                         throw error
                     }
                 }
+                // A released take owns its teardown. Never let its asynchronous
+                // stop consume the new microphone request.
+                if let recorderStopTask { _ = try? await recorderStopTask.value }
+                guard sessionID == current, activity == .starting, !Task.isCancelled else { return }
                 recordingStart = ProcessInfo.processInfo.systemUptime
                 statusMessage = "Starting microphone…"
                 try await recorder.start(deviceID: deviceID, preserveOriginalAudio: created.settings.preferences.keepOriginalAudio)
@@ -872,75 +913,105 @@ final class V07Controller: ObservableObject {
         let current = sessionID
         let test = isTestSession
         let capturedDestination = insertionDestination
-        let pendingDestination = destinationTask
         let clipboardCount = recordingClipboardChangeCount
-        transcriptionTask = Task { [weak self] in
+        let pending = PendingDictation(id: id, client: connection, upload: uploadTask,
+                                       pipe: uploadPipe, destination: destinationTask)
+        pendingDictations[current] = pending
+        pendingDictationOrder.append(current)
+        activeGenerationID = nil; activeClient = nil; self.uploadTask = nil; self.uploadPipe = nil
+        destinationTask = nil; insertionDestination = nil; recordingListHint = nil; recordingInputName = nil
+        recorder.onChunk = nil
+        let stopped = recorder.stopCapture()
+        recorderStopTask = stopped
+        let precedingDelivery = deliveryTail
+        let task = Task { [weak self] in
             guard let self else { return }
             var capturedAudio: CapturedAudio?
-            defer { capturedAudio?.cleanup() }
+            defer {
+                capturedAudio?.cleanup()
+                pendingDictations.removeValue(forKey: current)
+                pendingDictationOrder.removeAll { $0 == current }
+                if pendingDictations.isEmpty {
+                    insertionRebases.removeAll()
+                    deliveryTail = nil
+                    applyConfiguration(configuration.configuration)
+                }
+            }
             do {
-                let audio = try await recorder.stop()
+                let audio = try await stopped.value
                 capturedAudio = audio
-                guard sessionID == current, !Task.isCancelled else { return }
-                uploadPipe.finish()
-                var finish = try await uploadTask.value
-                guard sessionID == current, !Task.isCancelled else { return }
-                // All PCM is acknowledged; no local artifact is needed while
-                // the independent server transcribes and stores its result.
+                try Task.checkCancellation()
+                pending.pipe.finish()
+                var finish = try await pending.upload.value
+                try Task.checkCancellation()
                 audio.cleanup()
                 capturedAudio = nil
                 let destination: InsertionDestination
                 if test { destination = .clipboard }
                 else if let capturedDestination { destination = capturedDestination }
-                else { destination = await pendingDestination?.value ?? .clipboard }
+                else { destination = await pending.destination?.value ?? .clipboard }
                 let resolved: InsertionDestination
                 if let target = destination.target, !InsertionCapturePolicy.permitsInsertion(capturedAt: target.capturedAt, releasedAt: releasedAt) {
                     resolved = .clipboard
                 } else { resolved = destination }
                 let anchor: DictationDestination? = test ? .test : resolved.target.flatMap { $0.selection == nil ? nil : .field($0) }
                 finish.continuationID = anchor.flatMap { self.continuation(for: $0)?.generationID }
-                serverSealed = true // An interrupted response may still mean the server accepted the seal.
+                try Task.checkCancellation()
+                pending.sealed = true // The server may accept a seal whose response is interrupted.
                 var result = try await connection.finish(id, value: finish)
-                guard sessionID == current, !Task.isCancelled else { return }
+                try Task.checkCancellation()
                 if !result.status.isTerminal {
                     result = try await connection.events(id) { [weak self] record in
                         await self?.applyProgress(record, session: current)
                     }
                 }
-                guard sessionID == current, !Task.isCancelled else { return }
+                try Task.checkCancellation()
                 guard result.status == .completed else {
                     throw ServerClientError.rejected(422, result.error ?? "The server could not process this recording.")
                 }
-                await deliver(result, to: resolved, anchor: anchor, isTest: test, clipboardCount: clipboardCount, session: current)
-                guard sessionID == current, !Task.isCancelled else { return }
-                let receipt = DeliveryReceipt(status: lastDeliveryStatus.rawValue, message: lastDelivery)
-                // Receipt failures never trigger a second insertion. They only
-                // disable cross-take continuation until a confirmed receipt exists.
+                // Processing and uploads overlap. Clipboard/paste transactions
+                // remain ordered and each keeps its original destination.
+                await precedingDelivery?.value
+                await waitForCaptureRelease()
+                try Task.checkCancellation()
+                let deliveryDestination = rebasedDestination(resolved)
+                let receipt = await deliver(result, to: deliveryDestination, anchor: anchor, isTest: test,
+                                            clipboardCount: clipboardCount, session: current)
+                try Task.checkCancellation()
                 do { try await connection.delivery(id, receipt: receipt) }
                 catch { continuationAnchors.removeAll { $0.generationID == id } }
-                guard sessionID == current, !Task.isCancelled else { return }
-                activeGenerationID = nil; activeClient = nil; self.uploadTask = nil; self.uploadPipe = nil
-                destinationTask = nil; insertionDestination = nil; recordingListHint = nil; recordingInputName = nil
-                recorder.onChunk = nil
-                activity = lastDeliveryStatus == .failed ? .failed : .success
-                dismissHUDAfter(seconds: lastDeliveryStatus == .failed || lastDeliveryStatus == .unconfirmed ? 4 : 1.7)
+                try Task.checkCancellation()
+                if sessionID == current {
+                    activity = receipt.status == DictationDeliveryStatus.failed.rawValue ? .failed : .success
+                    dismissHUDAfter(seconds: lastDeliveryStatus == .failed || lastDeliveryStatus == .unconfirmed ? 4 : 1.7)
+                }
                 refreshServer()
-                applyConfiguration(configuration.configuration)
-            } catch is CancellationError {
-            } catch AudioRecordingError.cancelled {
             } catch {
-                guard sessionID == current, !Task.isCancelled else { return }
-                if error is URLError { serverHealth = nil; serverStatusMessage = Self.connectionMessage(error) }
-                failSession(Self.connectionMessage(error), cancelServer: !serverSealed)
+                pending.upload.cancel(); pending.pipe.cancel(); pending.destination?.cancel()
+                if !pending.sealed { Task { try? await connection.cancel(id) } }
+                guard !Task.isCancelled else { return }
+                if sessionID == current {
+                    if error is URLError { serverHealth = nil; serverStatusMessage = Self.connectionMessage(error) }
+                    showError(Self.connectionMessage(error))
+                }
+                refreshHistory()
             }
         }
+        pending.task = task
+        // Even a failed/cancelled middle take must preserve the ordering link
+        // to earlier deliveries for every later take.
+        deliveryTail = Task {
+            await precedingDelivery?.value
+            await task.value
+        }
+        resumeDeliveryWaiters()
     }
 
     private func applyProgress(_ generation: GenerationRecord, session: UUID) {
-        guard sessionID == session, isBusy else { return }
+        guard sessionID == session, !isCapturing else { return }
         switch generation.status {
         case .receiving: statusMessage = "Finishing upload…"
-        case .queued: statusMessage = "Waiting for server…"
+        case .queued: statusMessage = "Queued on server…"
         case .transcribing: statusMessage = "Transcribing on server…"
         case .proofreading: statusMessage = "Proofreading on server…"
         case .completed: statusMessage = "Preparing result…"
@@ -949,49 +1020,100 @@ final class V07Controller: ObservableObject {
     }
 
     private func deliver(_ record: GenerationRecord, to destination: InsertionDestination,
-                         anchor: DictationDestination?, isTest: Bool, clipboardCount: Int, session: UUID) async {
-        lastTranscript = record.previewText.isEmpty ? record.finalText : record.previewText
-        lastAudioSeconds = record.audioSeconds
-        lastTranscriptionSeconds = (record.speech?.processingSeconds ?? 0) + (record.proofreading?.processingSeconds ?? 0)
+                         anchor: DictationDestination?, isTest: Bool, clipboardCount: Int,
+                         session: UUID) async -> DeliveryReceipt {
+        var transcript = record.previewText.isEmpty ? record.finalText : record.previewText
+        let message: String
+        let deliveryStatus: DictationDeliveryStatus
+        let status: String
         if isTest {
             rememberContinuation(record, at: .test)
-            lastDelivery = "Test complete. Nothing was pasted."
-            lastDeliveryStatus = .tested
-            statusMessage = record.finalText.isEmpty ? "No speech detected" : "Ready to copy"
-            return
-        }
-        if record.insertionText.isEmpty {
+            message = "Test complete. Nothing was pasted."
+            deliveryStatus = .tested
+            status = record.finalText.isEmpty ? "No speech detected" : "Ready to copy"
+        } else if record.insertionText.isEmpty {
             if record.continuation == nil && record.previewText.isEmpty {
-                lastDelivery = "No speech detected"; lastDeliveryStatus = .none
+                message = "No speech detected"; deliveryStatus = .none
             } else if let confirmed = TextInserter.unchangedAnchor(destination.target) {
                 rememberContinuation(record, at: .field(confirmed))
-                lastDelivery = "List updated. Nothing was pasted."; lastDeliveryStatus = .listUpdated
+                message = "List updated. Nothing was pasted."; deliveryStatus = .listUpdated
             } else {
-                lastDelivery = "List state unchanged: the original cursor could not be confirmed."
-                lastDeliveryStatus = .unconfirmed
+                message = "List state unchanged: the original cursor could not be confirmed."
+                deliveryStatus = .unconfirmed
             }
-            statusMessage = lastDelivery
-            return
+            status = message
+        } else {
+            if sessionID == session { activity = .delivering; statusMessage = "Inserting at your cursor…" }
+            let inserter = TextInserter()
+            let outcome = await inserter.deliver(record.insertionText, copying: record.finalText,
+                                                  to: destination, clipboardUnchangedSince: clipboardCount,
+                                                  waitUntilReady: { await self.waitForCaptureRelease() },
+                                                  isCaptureActive: { self.isCapturing || self.hotkey.isHoldingFn })
+            guard !Task.isCancelled else { return DeliveryReceipt(status: "failed", message: "Delivery cancelled") }
+            if let anchor { continuationAnchors.removeAll { $0.destination == anchor } }
+            switch outcome {
+            case .inserted:
+                if let target = inserter.confirmedAnchor {
+                    if let original = destination.target {
+                        insertionRebases.inserted(at: original, confirmed: target)
+                    }
+                    rememberContinuation(record, at: .field(target))
+                }
+                message = "Inserted at your cursor"; deliveryStatus = .inserted; status = "Inserted"
+            case .copied(let reason):
+                transcript = record.finalText; message = reason; deliveryStatus = .copied; status = "Copied"
+            case .unconfirmed(let backup):
+                transcript = record.finalText
+                message = backup ? "Insertion unconfirmed. Copied to clipboard if needed." : "Insertion unconfirmed. Your words are here to copy."
+                deliveryStatus = .unconfirmed; status = "Check insertion"
+            case .failed(let reason):
+                transcript = record.finalText; message = reason; deliveryStatus = .failed; status = "Ready to copy"
+            }
         }
-        activity = .delivering
-        statusMessage = "Inserting at your cursor…"
-        let outcome = await inserter.deliver(record.insertionText, copying: record.finalText,
-                                              to: destination, clipboardUnchangedSince: clipboardCount)
-        guard sessionID == session, !Task.isCancelled else { return }
-        if let anchor { continuationAnchors.removeAll { $0.destination == anchor } }
-        switch outcome {
-        case .inserted:
-            if let target = inserter.confirmedAnchor { rememberContinuation(record, at: .field(target)) }
-            lastDelivery = "Inserted at your cursor"; lastDeliveryStatus = .inserted; statusMessage = "Inserted"
-        case .copied(let reason):
-            lastTranscript = record.finalText; lastDelivery = reason; lastDeliveryStatus = .copied; statusMessage = "Copied"
-        case .unconfirmed(let backup):
-            lastTranscript = record.finalText
-            lastDelivery = backup ? "Insertion unconfirmed. Copied to clipboard if needed." : "Insertion unconfirmed. Your words are here to copy."
-            lastDeliveryStatus = .unconfirmed; statusMessage = "Check insertion"
-        case .failed(let reason):
-            lastTranscript = record.finalText; lastDelivery = reason; lastDeliveryStatus = .failed; statusMessage = "Ready to copy"
+        lastTranscript = transcript
+        lastAudioSeconds = record.audioSeconds
+        lastTranscriptionSeconds = (record.speech?.processingSeconds ?? 0) + (record.proofreading?.processingSeconds ?? 0)
+        lastDelivery = message
+        lastDeliveryStatus = deliveryStatus
+        if sessionID == session { statusMessage = status }
+        return DeliveryReceipt(status: deliveryStatus.rawValue, message: message)
+    }
+
+    private func rebasedDestination(_ destination: InsertionDestination) -> InsertionDestination {
+        guard let target = destination.target else { return destination }
+        return .field(insertionRebases.destination(for: target) { TextInserter.unchangedAnchor($0) != nil })
+    }
+
+    private func waitForCaptureRelease() async {
+        while !Task.isCancelled && (isCapturing || hotkey.isHoldingFn) {
+            let waiter = UUID()
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    if Task.isCancelled { continuation.resume() }
+                    else { deliveryWaiters[waiter] = continuation }
+                }
+            } onCancel: {
+                Task { @MainActor [weak self] in self?.deliveryWaiters.removeValue(forKey: waiter)?.resume() }
+            }
         }
+    }
+
+    private func resumeDeliveryWaiters() {
+        guard !isCapturing, !hotkey.isHoldingFn else { return }
+        let waiters = deliveryWaiters.values
+        deliveryWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
+    private func stopPendingDictations() {
+        for pending in pendingDictations.values {
+            pending.cancel()
+            if !pending.sealed { Task { try? await pending.client.cancel(pending.id) } }
+        }
+        pendingDictations.removeAll()
+        pendingDictationOrder.removeAll()
+        deliveryTail = nil
+        insertionRebases.removeAll()
     }
 
     private func continuation(for destination: DictationDestination) -> ContinuationAnchor? {
@@ -1048,9 +1170,13 @@ final class V07Controller: ObservableObject {
 
     private func restForSystem() {
         stopShortcutCheck()
-        if isBusy {
-            let cancelServer = !serverSealed
-            failSession("Recording interrupted while your Mac was away. Check shared history for completed results.", cancelServer: cancelServer)
+        let interrupted = isBusy
+        if isCapturing {
+            failSession("Recording interrupted while your Mac was away. Check shared history for completed results.", cancelServer: true)
+        }
+        stopPendingDictations()
+        if interrupted {
+            showError("Recording interrupted while your Mac was away. Check shared history for completed results.")
         }
         continuationAnchors.removeAll()
     }
