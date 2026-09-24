@@ -106,6 +106,11 @@ final class V07Controller: ObservableObject {
         }
     }
     @Published private(set) var loginItemError: String?
+    @Published var muteOutputWhileRecording = false {
+        didSet {
+            if !applyingConfiguration { configuration.update { $0.muteOutputWhileRecording = muteOutputWhileRecording } }
+        }
+    }
     @Published var statusMessage = "Connecting to server…"
     @Published private(set) var serverHealth: ServerHealth?
     @Published private(set) var serverStatusMessage = "Connecting…"
@@ -147,6 +152,7 @@ final class V07Controller: ObservableObject {
     private let audioDevices: AudioDeviceStore
     private let serverClientFactory: (() throws -> ServerClient)?
     private let hotkey = HotkeyMonitor()
+    private let outputMuter = SystemOutputMuter()
     private var subscriptions: Set<AnyCancellable> = []
     private var applyingConfiguration = false
     private var recordingTimer: Timer?
@@ -253,6 +259,7 @@ final class V07Controller: ObservableObject {
         applyingConfiguration = true
         if let key = HoldKey(rawValue: settings.holdKey), shortcut != key { shortcut = key }
         if launchAtLogin != settings.launchAtLogin { launchAtLogin = settings.launchAtLogin }
+        if muteOutputWhileRecording != settings.muteOutputWhileRecording { muteOutputWhileRecording = settings.muteOutputWhileRecording }
         applyingConfiguration = false
     }
 
@@ -728,6 +735,7 @@ final class V07Controller: ObservableObject {
         destinationTask?.cancel(); destinationTask = nil
         stopRecordingTimer()
         recorder.cancel()
+        outputMuter.restore()
         recorder.onChunk = nil
         insertionDestination = nil
         recordingListHint = nil
@@ -843,6 +851,7 @@ final class V07Controller: ObservableObject {
         activity = .starting
         statusMessage = "Connecting recording…"
         onHUDVisibility?(true)
+        if muteOutputWhileRecording { outputMuter.mute() }
         if !isTest {
             let capture = TextInserter.beginDestinationCapture()
             destinationTask = capture
@@ -912,6 +921,7 @@ final class V07Controller: ObservableObject {
     private func finishDictation(atLimit: Bool = false) {
         guard isCapturing else { return }
         recorder.stopAcceptingAudio()
+        outputMuter.restore()
         guard activity == .recording else { cancelDictation(); return }
         let releasedAt = ProcessInfo.processInfo.systemUptime
         destinationTask?.finish()

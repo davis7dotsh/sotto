@@ -203,20 +203,24 @@ enum AudioInputHardware {
     }
 
     private static func hasInputChannels(_ id: AudioDeviceID) -> Bool {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration, mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        channelCount(id, scope: kAudioObjectPropertyScopeInput) > 0
+    }
+
+    static func channelCount(_ id: AudioDeviceID, scope: AudioObjectPropertyScope) -> Int {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration, mScope: scope, mElement: kAudioObjectPropertyElementMain)
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr,
-              size >= MemoryLayout<UInt32>.size, size <= 1_048_576 else { return false }
+              size >= MemoryLayout<UInt32>.size, size <= 1_048_576 else { return 0 }
         let allocationSize = max(Int(size), MemoryLayout<AudioBufferList>.stride)
         let memory = UnsafeMutableRawPointer.allocate(byteCount: allocationSize, alignment: MemoryLayout<AudioBufferList>.alignment)
         defer { memory.deallocate() }
         memory.initializeMemory(as: UInt8.self, repeating: 0, count: allocationSize)
-        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, memory) == noErr else { return false }
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, memory) == noErr else { return 0 }
         let list = memory.assumingMemoryBound(to: AudioBufferList.self)
         let bufferOffset = MemoryLayout<AudioBufferList>.stride - MemoryLayout<AudioBuffer>.stride
         guard Int(size) >= bufferOffset,
-              Int(list.pointee.mNumberBuffers) <= (Int(size) - bufferOffset) / MemoryLayout<AudioBuffer>.stride else { return false }
-        return UnsafeMutableAudioBufferListPointer(list).contains { $0.mNumberChannels > 0 }
+              Int(list.pointee.mNumberBuffers) <= (Int(size) - bufferOffset) / MemoryLayout<AudioBuffer>.stride else { return 0 }
+        return UnsafeMutableAudioBufferListPointer(list).reduce(0) { $0 + Int($1.mNumberChannels) }
     }
 
     private static func transport(_ rawValue: UInt32?) -> AudioInputTransport {

@@ -64,6 +64,8 @@ private struct DevicePreferencesForm: View {
                     }
                     .frame(height: 90)
                 }
+                Toggle("Mute system audio while recording", isOn: $controller.muteOutputWhileRecording)
+                    .accessibilityIdentifier("preferences.mute-output")
                 Toggle("Start \(V07Build.current.displayName) at login", isOn: $controller.launchAtLogin)
                 if let error = controller.loginItemError {
                     Text(error).font(.caption).foregroundStyle(V07Palette.warning)
