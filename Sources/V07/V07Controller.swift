@@ -700,6 +700,7 @@ final class V07Controller: ObservableObject {
         let remaining = pendingDictationOrder.last
         sessionID = remaining ?? UUID()
         activity = remaining == nil ? .idle : .transcribing
+        insertionRebases.endBatchIfIdle(isCapturing: isCapturing, hasPendingDictations: !pendingDictations.isEmpty)
         resumeDeliveryWaiters()
         statusMessage = remaining == nil ? "Cancelled" : "Cancelled · Earlier dictation is still processing"
         errorMessage = nil
@@ -729,6 +730,7 @@ final class V07Controller: ObservableObject {
         let connection = activeClient
         resetSession()
         showError(message)
+        insertionRebases.endBatchIfIdle(isCapturing: isCapturing, hasPendingDictations: !pendingDictations.isEmpty)
         resumeDeliveryWaiters()
         if cancelServer, let generation, let connection { Task { try? await connection.cancel(generation) } }
         refreshHistory()
@@ -820,7 +822,7 @@ final class V07Controller: ObservableObject {
             showError("No microphone is available. Connect an input and try again."); onShowWindow?(); return
         }
         hudTask?.cancel(); errorMessage = nil
-        if pendingDictations.isEmpty { insertionRebases.removeAll() }
+        insertionRebases.endBatchIfIdle(isCapturing: isCapturing, hasPendingDictations: !pendingDictations.isEmpty)
         sessionID = UUID()
         let current = sessionID
         isTestSession = isTest
@@ -933,8 +935,8 @@ final class V07Controller: ObservableObject {
                 capturedAudio?.cleanup()
                 pendingDictations.removeValue(forKey: current)
                 pendingDictationOrder.removeAll { $0 == current }
+                insertionRebases.endBatchIfIdle(isCapturing: isCapturing, hasPendingDictations: !pendingDictations.isEmpty)
                 if pendingDictations.isEmpty {
-                    insertionRebases.removeAll()
                     deliveryTail = nil
                     applyConfiguration(configuration.configuration)
                 }
@@ -998,6 +1000,7 @@ final class V07Controller: ObservableObject {
                 refreshServer()
             } catch {
                 pending.upload.cancel(); pending.pipe.cancel(); pending.destination?.cancel()
+                if case ServerClientError.finishNotAccepted = error { pending.sealed = false }
                 if !pending.sealed { Task { try? await connection.cancel(id) } }
                 guard !Task.isCancelled else { return }
                 if sessionID == current {

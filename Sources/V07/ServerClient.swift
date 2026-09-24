@@ -8,6 +8,7 @@ enum ServerClientError: LocalizedError {
     case invalidResponse
     case disconnected
     case uploadBacklog
+    case finishNotAccepted
     case importArtifactTooLarge(WisprFlowArtifactName, Int)
     case dictionaryArchiveTooLarge(Int)
 
@@ -18,6 +19,7 @@ enum ServerClientError: LocalizedError {
         case .invalidResponse: "The server returned an invalid response."
         case .disconnected: "The server connection was interrupted. Any completed result is available in shared history."
         case .uploadBacklog: "The connection cannot keep up with the microphone. This recording was stopped."
+        case .finishNotAccepted: "The server did not accept this recording for processing."
         case .importArtifactTooLarge(let name, let bytes):
             "\(name.rawValue) is \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)), above the 8 MiB source-artifact limit."
         case .dictionaryArchiveTooLarge(let bytes):
@@ -242,7 +244,41 @@ extension ServerClient {
             // Sealing is idempotent for these exact frame counts. Recover a lost
             // acknowledgement without abandoning the take's eventual delivery.
             try await Task.sleep(for: .milliseconds(250))
-            return try await json(path: "v1/generations/\(id)/finish", method: "POST", body: body)
+            do { return try await json(path: "v1/generations/\(id)/finish", method: "POST", body: body) }
+            catch {
+                try Task.checkCancellation()
+                guard Self.isTransient(error) else { throw error }
+                return try await reconcileFinish(id, value: value)
+            }
+        }
+    }
+
+    private func reconcileFinish(_ id: UUID, value: FinishGenerationRequest) async throws -> GenerationRecord {
+        var failures = 0
+        while true {
+            try Task.checkCancellation()
+            do {
+                let record = try await generation(id)
+                try Task.checkCancellation()
+                guard record.id == id else { throw ServerClientError.invalidResponse }
+                // Only a confirmed receiving record is safe to cancel. An
+                // unreachable server may already be processing this take.
+                guard record.status != .receiving else { throw ServerClientError.finishNotAccepted }
+                // A failed seal can have no audio artifacts. Preserve its
+                // terminal reason; the controller never delivers these states.
+                if record.status == .failed || record.status == .cancelled { return record }
+                guard record.inferenceAudio?.frameCount == value.inferenceFrames,
+                      record.originalAudio?.frameCount == value.originalFrames else {
+                    throw ServerClientError.invalidResponse
+                }
+                return record
+            } catch {
+                try Task.checkCancellation()
+                guard Self.isTransient(error) else { throw error }
+                failures += 1
+                guard failures < 3 else { throw error }
+                try await Task.sleep(for: .milliseconds(250 * failures))
+            }
         }
     }
     func cancel(_ id: UUID) async throws {

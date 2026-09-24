@@ -86,6 +86,115 @@ final class ServerClientTests: XCTestCase {
         XCTAssertEqual(fixture.requests.count, 1)
     }
 
+    func testFinishReconcilesSealedQueueAndCompletedResultAfterBothAcknowledgementsAreLost() async throws {
+        for status in [GenerationStatus.queued, .completed] {
+            let fixture = HTTPFixture()
+            defer { fixture.session.invalidateAndCancel() }
+            var record = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"),
+                                          status: status, settings: .init())
+            record.inferenceAudio = .init(filename: "inference.wav", sampleRate: 16_000, channels: 1,
+                                          frameCount: 8_000, byteCount: 32_044)
+            record.finalText = status == .completed ? "Recovered sealed take" : ""
+            let sealed = record
+            fixture.respond = { request in
+                if request.httpMethod == "POST" { throw URLError(.networkConnectionLost) }
+                return (200, try V07API.encodeWire(sealed))
+            }
+            let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+            let result = try await client.finish(sealed.id, value: .init(inferenceFrames: 8_000))
+            XCTAssertEqual(result.id, sealed.id)
+            XCTAssertEqual(result.status, status)
+            XCTAssertEqual(result.finalText, sealed.finalText)
+            XCTAssertEqual(fixture.requests.map(\.httpMethod), ["POST", "POST", "GET"])
+        }
+    }
+
+    func testFinishConfirmedReceivingRecordCanBeCancelled() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        let record = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"), settings: .init())
+        fixture.respond = { request in
+            if request.httpMethod == "POST" { throw URLError(.networkConnectionLost) }
+            return (200, try V07API.encodeWire(record))
+        }
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        do {
+            _ = try await client.finish(record.id, value: .init(inferenceFrames: 8_000))
+            XCTFail("A still-receiving take has not been accepted for processing")
+        } catch ServerClientError.finishNotAccepted { }
+        XCTAssertEqual(fixture.requests.count, 3)
+    }
+
+    func testFinishReconciliationPreservesFailedSealReasonWithoutArtifacts() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        var record = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"),
+                                      status: .failed, settings: .init())
+        record.error = "Audio could not be preserved"
+        let failed = record
+        fixture.respond = { request in
+            if request.httpMethod == "POST" { throw URLError(.networkConnectionLost) }
+            return (200, try V07API.encodeWire(failed))
+        }
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        let result = try await client.finish(failed.id, value: .init(inferenceFrames: 8_000))
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertEqual(result.error, failed.error)
+        XCTAssertNil(result.inferenceAudio)
+    }
+
+    func testFinishReconciliationRejectsWrongIdentityOrAudioCounts() async throws {
+        for mismatch in ["identity", "inference", "original"] {
+            let fixture = HTTPFixture()
+            defer { fixture.session.invalidateAndCancel() }
+            let id = UUID()
+            var record = GenerationRecord(id: mismatch == "identity" ? UUID() : id,
+                                          requestID: UUID(), device: .init(id: "test", name: "Test Mac"),
+                                          status: .completed, settings: .init())
+            record.inferenceAudio = .init(filename: "inference.wav", sampleRate: 16_000, channels: 1,
+                                          frameCount: mismatch == "inference" ? 16_000 : 8_000, byteCount: 32_044)
+            if mismatch == "original" {
+                record.originalAudio = .init(filename: "original.wav", sampleRate: 48_000, channels: 1,
+                                             frameCount: 24_000, byteCount: 96_044)
+            }
+            let invalid = record
+            fixture.respond = { request in
+                if request.httpMethod == "POST" { throw URLError(.networkConnectionLost) }
+                return (200, try V07API.encodeWire(invalid))
+            }
+            let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+            do {
+                _ = try await client.finish(id, value: .init(inferenceFrames: 8_000))
+                XCTFail("Mismatched \(mismatch) must not be delivered")
+            } catch ServerClientError.invalidResponse { }
+            XCTAssertEqual(fixture.requests.count, 3)
+        }
+    }
+
+    func testFinishReconciliationBoundsAnUnreachableServer() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        fixture.respond = { _ in throw URLError(.networkConnectionLost) }
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        do {
+            _ = try await client.finish(UUID(), value: .init(inferenceFrames: 8_000))
+            XCTFail("An unreachable server must stop retrying")
+        } catch let error as URLError { XCTAssertEqual(error.code, .networkConnectionLost) }
+        XCTAssertEqual(fixture.requests.map(\.httpMethod), ["POST", "POST", "GET", "GET", "GET"])
+    }
+
+    func testCancelledFinishDoesNotRetryOrReconcile() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        fixture.respond = { _ in throw URLError(.cancelled) }
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        do {
+            _ = try await client.finish(UUID(), value: .init(inferenceFrames: 8_000))
+            XCTFail("Cancelled requests must stop immediately")
+        } catch let error as URLError { XCTAssertEqual(error.code, .cancelled) }
+        XCTAssertEqual(fixture.requests.count, 1)
+    }
+
     func testQueuedEventsReconnectUntilTerminalResult() async throws {
         let fixture = HTTPFixture()
         defer { fixture.session.invalidateAndCancel() }
