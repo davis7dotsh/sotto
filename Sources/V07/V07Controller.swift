@@ -179,6 +179,7 @@ final class V07Controller: ObservableObject {
         let destination: InsertionDestinationCapture?
         var task: Task<Void, Never>?
         var sealed = false
+        var continuationDestination: DictationDestination?
 
         init(id: UUID, client: ServerClient, upload: Task<FinishGenerationRequest, Error>,
              pipe: AudioChunkPipe, destination: InsertionDestinationCapture?) {
@@ -916,6 +917,7 @@ final class V07Controller: ObservableObject {
         let clipboardCount = recordingClipboardChangeCount
         let pending = PendingDictation(id: id, client: connection, upload: uploadTask,
                                        pipe: uploadPipe, destination: destinationTask)
+        pending.continuationDestination = test ? .test : capturedDestination?.target.map(DictationDestination.field)
         pendingDictations[current] = pending
         pendingDictationOrder.append(current)
         activeGenerationID = nil; activeClient = nil; self.uploadTask = nil; self.uploadPipe = nil
@@ -955,7 +957,15 @@ final class V07Controller: ObservableObject {
                     resolved = .clipboard
                 } else { resolved = destination }
                 let anchor: DictationDestination? = test ? .test : resolved.target.flatMap { $0.selection == nil ? nil : .field($0) }
-                finish.continuationID = anchor.flatMap { self.continuation(for: $0)?.generationID }
+                pending.continuationDestination = anchor
+                // Concurrent takes must not both extend the last delivered list
+                // snapshot. Continue only when this destination has settled;
+                // unresolved earlier destinations conservatively suppress it.
+                let hasEarlierDestination = pendingDictationOrder.prefix { $0 != current }.contains { earlier in
+                    guard let previous = pendingDictations[earlier] else { return false }
+                    return previous.continuationDestination == nil || previous.continuationDestination == anchor
+                }
+                finish.continuationID = hasEarlierDestination ? nil : anchor.flatMap { self.continuation(for: $0)?.generationID }
                 try Task.checkCancellation()
                 pending.sealed = true // The server may accept a seal whose response is interrupted.
                 var result = try await connection.finish(id, value: finish)
@@ -993,6 +1003,14 @@ final class V07Controller: ObservableObject {
                 if sessionID == current {
                     if error is URLError { serverHealth = nil; serverStatusMessage = Self.connectionMessage(error) }
                     showError(Self.connectionMessage(error))
+                } else {
+                    let message = "Earlier dictation failed: \(Self.connectionMessage(error))"
+                    errorMessage = message
+                    lastDelivery = message
+                    lastDeliveryStatus = .failed
+                    // An older job may fail while the microphone or a newer
+                    // result owns the HUD. Keep that live activity intact.
+                    if !activity.isBusy { showError(message) }
                 }
                 refreshHistory()
             }

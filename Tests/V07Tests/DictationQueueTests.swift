@@ -128,6 +128,52 @@ final class DictationQueueTests: XCTestCase {
     }
 
     @MainActor
+    func testQueuedTakesDoNotReuseTheSameDeliveredListContinuation() async throws {
+        let fixture = try QueueControllerFixture()
+        defer { fixture.close() }
+        try await fixture.ready()
+        try await fixture.recordAndRelease()
+        try await waitUntil { fixture.server.finishing.count == 1 }
+        let delivered = try XCTUnwrap(fixture.server.created.first)
+        fixture.server.complete(delivered, text: "1. First item", listNextNumber: 2)
+        try await waitUntil { fixture.server.deliveries == [delivered] && !fixture.controller.isBusy }
+
+        try await fixture.recordAndRelease()
+        try await waitUntil { fixture.server.finishing.count == 2 }
+        let second = try XCTUnwrap(fixture.server.created.last)
+        XCTAssertEqual(fixture.server.finishValue(second)?.continuationID, delivered)
+        try await fixture.recordAndRelease()
+        try await waitUntil { fixture.server.finishing.count == 3 }
+        let third = try XCTUnwrap(fixture.server.created.last)
+        XCTAssertNil(fixture.server.finishValue(third)?.continuationID,
+                     "A queued take must not independently extend the same old numbered-list snapshot")
+        XCTAssertEqual(fixture.server.deliveries, [delivered], "Uploading and sealing must not wait for the preceding result")
+        fixture.server.complete(second, text: "2. Second item", listNextNumber: 3)
+        fixture.server.complete(third, text: "Third take")
+        try await waitUntil { fixture.server.deliveries.count == 3 && !fixture.controller.isBusy }
+    }
+
+    @MainActor
+    func testOlderFailureIsVisibleWithoutReplacingTheActiveRecording() async throws {
+        let fixture = try QueueControllerFixture()
+        defer { fixture.close() }
+        try await fixture.ready()
+        try await fixture.recordAndRelease()
+        try await waitUntil { fixture.server.finishing.count == 1 }
+        let first = try XCTUnwrap(fixture.server.created.first)
+        fixture.controller.toggleTestRecording()
+        try await waitUntil { fixture.controller.isRecording }
+        fixture.server.fail(first, message: "Speech processing failed")
+        try await waitUntil { fixture.controller.errorMessage?.contains("Speech processing failed") == true }
+        XCTAssertEqual(fixture.controller.activity, .recording)
+        XCTAssertEqual(fixture.controller.statusMessage, "Listening")
+        XCTAssertEqual(fixture.controller.lastDeliveryStatus, .failed)
+        XCTAssertTrue(fixture.controller.lastDelivery.contains("Earlier dictation failed"))
+        XCTAssertTrue(fixture.server.deliveries.isEmpty)
+        fixture.controller.cancelDictation()
+    }
+
+    @MainActor
     func testRepeatedCancellationDrainsPendingTakesAndAllowsAnotherHold() async throws {
         let fixture = try QueueControllerFixture()
         defer { fixture.close() }
@@ -239,6 +285,7 @@ private final class QueueHTTPFixture: @unchecked Sendable {
     private let lock = NSLock()
     private var records: [GenerationRecord] = []
     private var finishRequests: [UUID: QueueURLProtocol] = [:]
+    private var finishValues: [UUID: FinishGenerationRequest] = [:]
     private var delivered: [UUID] = []
     private var cancellations: [UUID] = []
     private var uploadedFrames: [String: Int64] = [:]
@@ -256,12 +303,28 @@ private final class QueueHTTPFixture: @unchecked Sendable {
 
     deinit { QueueURLProtocol.unregister(id) }
 
-    func complete(_ id: UUID, text: String) {
+    func finishValue(_ id: UUID) -> FinishGenerationRequest? { lock.withLock { finishValues[id] } }
+
+    func fail(_ id: UUID, message: String) {
+        let response = lock.withLock { () -> (QueueURLProtocol, GenerationRecord)? in
+            guard let pending = finishRequests[id], let index = records.firstIndex(where: { $0.id == id }) else { return nil }
+            records[index].status = .failed
+            records[index].error = message
+            return (pending, records[index])
+        }
+        if let (pending, record) = response { pending.respond(record) }
+    }
+
+    func complete(_ id: UUID, text: String, listNextNumber: Int? = nil) {
         let response = lock.withLock { () -> (QueueURLProtocol, GenerationRecord)? in
             guard let pending = finishRequests[id], let index = records.firstIndex(where: { $0.id == id }) else { return nil }
             records[index].status = .completed
             records[index].finalText = text
             records[index].insertionText = text
+            if let listNextNumber {
+                records[index].continuation = .init(list: .init(style: .numbered, nextNumber: listNextNumber),
+                                                  preview: text, boundary: .line)
+            }
             return (pending, records[index])
         }
         if let (pending, record) = response { pending.respond(record) }
@@ -283,7 +346,9 @@ private final class QueueHTTPFixture: @unchecked Sendable {
             transport.respond(GenerationPage(items: lock.withLock { records }))
         } else if parts.count >= 4, let id = UUID(uuidString: parts[3]) {
             switch parts.last {
-            case "finish": lock.withLock { finishRequests[id] = transport }
+            case "finish":
+                let value = try V07API.decodeWire(FinishGenerationRequest.self, from: body(request))
+                lock.withLock { finishValues[id] = value; finishRequests[id] = transport }
             case "cancel":
                 lock.withLock { cancellations.append(id) }
                 transport.respondEmpty()
