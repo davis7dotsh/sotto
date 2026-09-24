@@ -109,20 +109,31 @@ final class ServerClientTests: XCTestCase {
         }
     }
 
-    func testFinishConfirmedReceivingRecordCanBeCancelled() async throws {
+    func testFinishReplaysIdenticalSealWhenStatusReadOvertakesFinish() async throws {
         let fixture = HTTPFixture()
         defer { fixture.session.invalidateAndCancel() }
         let record = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"), settings: .init())
+        var accepted = record
+        accepted.status = .queued
+        accepted.inferenceAudio = .init(filename: "inference.wav", sampleRate: 16_000, channels: 1,
+                                        frameCount: 8_000, byteCount: 32_044)
+        let sealed = accepted
+        let bodies = RequestBodyCollector()
         fixture.respond = { request in
-            if request.httpMethod == "POST" { throw URLError(.networkConnectionLost) }
+            if request.httpMethod == "POST" {
+                bodies.append(try requestBody(request))
+                if bodies.values.count <= 2 { throw URLError(.networkConnectionLost) }
+                return (200, try V07API.encodeWire(sealed))
+            }
             return (200, try V07API.encodeWire(record))
         }
         let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
-        do {
-            _ = try await client.finish(record.id, value: .init(inferenceFrames: 8_000))
-            XCTFail("A still-receiving take has not been accepted for processing")
-        } catch ServerClientError.finishNotAccepted { }
-        XCTAssertEqual(fixture.requests.count, 3)
+        let result = try await client.finish(record.id, value: .init(inferenceFrames: 8_000))
+        XCTAssertEqual(result.id, record.id)
+        XCTAssertEqual(result.status, .queued)
+        XCTAssertEqual(fixture.requests.map(\.httpMethod), ["POST", "POST", "GET", "POST"])
+        XCTAssertEqual(bodies.values.count, 3)
+        XCTAssertTrue(bodies.values.allSatisfy { $0 == bodies.values.first })
     }
 
     func testFinishReconciliationPreservesFailedSealReasonWithoutArtifacts() async throws {
@@ -171,16 +182,25 @@ final class ServerClientTests: XCTestCase {
         }
     }
 
-    func testFinishReconciliationBoundsAnUnreachableServer() async throws {
-        let fixture = HTTPFixture()
-        defer { fixture.session.invalidateAndCancel() }
-        fixture.respond = { _ in throw URLError(.networkConnectionLost) }
-        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
-        do {
-            _ = try await client.finish(UUID(), value: .init(inferenceFrames: 8_000))
-            XCTFail("An unreachable server must stop retrying")
-        } catch let error as URLError { XCTAssertEqual(error.code, .networkConnectionLost) }
-        XCTAssertEqual(fixture.requests.map(\.httpMethod), ["POST", "POST", "GET", "GET", "GET"])
+    func testFinishReconciliationBoundsTransientStatusAndSealFailures() async throws {
+        for canReadStatus in [false, true] {
+            let fixture = HTTPFixture()
+            defer { fixture.session.invalidateAndCancel() }
+            let record = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"), settings: .init())
+            fixture.respond = { request in
+                if canReadStatus, request.httpMethod == "GET" { return (200, try V07API.encodeWire(record)) }
+                throw URLError(.networkConnectionLost)
+            }
+            let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+            do {
+                _ = try await client.finish(record.id, value: .init(inferenceFrames: 8_000))
+                XCTFail("Transient failures must stop retrying within the recovery budget")
+            } catch let error as URLError { XCTAssertEqual(error.code, .networkConnectionLost) }
+            let expected = canReadStatus
+                ? ["POST", "POST", "GET", "POST", "GET", "POST", "GET", "POST"]
+                : ["POST", "POST", "GET", "GET", "GET"]
+            XCTAssertEqual(fixture.requests.map(\.httpMethod), expected)
+        }
     }
 
     func testCancelledFinishDoesNotRetryOrReconcile() async throws {

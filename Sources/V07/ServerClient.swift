@@ -8,7 +8,6 @@ enum ServerClientError: LocalizedError {
     case invalidResponse
     case disconnected
     case uploadBacklog
-    case finishNotAccepted
     case importArtifactTooLarge(WisprFlowArtifactName, Int)
     case dictionaryArchiveTooLarge(Int)
 
@@ -19,7 +18,6 @@ enum ServerClientError: LocalizedError {
         case .invalidResponse: "The server returned an invalid response."
         case .disconnected: "The server connection was interrupted. Any completed result is available in shared history."
         case .uploadBacklog: "The connection cannot keep up with the microphone. This recording was stopped."
-        case .finishNotAccepted: "The server did not accept this recording for processing."
         case .importArtifactTooLarge(let name, let bytes):
             "\(name.rawValue) is \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)), above the 8 MiB source-artifact limit."
         case .dictionaryArchiveTooLarge(let bytes):
@@ -258,16 +256,21 @@ extension ServerClient {
         while true {
             try Task.checkCancellation()
             do {
-                let record = try await generation(id)
+                var record = try await generation(id)
                 try Task.checkCancellation()
                 guard record.id == id else { throw ServerClientError.invalidResponse }
-                // Only a confirmed receiving record is safe to cancel. An
-                // unreachable server may already be processing this take.
-                guard record.status != .receiving else { throw ServerClientError.finishNotAccepted }
+                // A GET can overtake a delayed finish request. Replay the same
+                // seal within this retry budget instead of cancelling its audio.
+                if record.status == .receiving {
+                    record = try await json(path: "v1/generations/\(id)/finish", method: "POST", body: Self.encode(value))
+                    try Task.checkCancellation()
+                    guard record.id == id else { throw ServerClientError.invalidResponse }
+                }
                 // A failed seal can have no audio artifacts. Preserve its
                 // terminal reason; the controller never delivers these states.
                 if record.status == .failed || record.status == .cancelled { return record }
-                guard record.inferenceAudio?.frameCount == value.inferenceFrames,
+                guard record.status != .receiving,
+                      record.inferenceAudio?.frameCount == value.inferenceFrames,
                       record.originalAudio?.frameCount == value.originalFrames else {
                     throw ServerClientError.invalidResponse
                 }

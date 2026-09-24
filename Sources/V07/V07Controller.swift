@@ -1000,7 +1000,6 @@ final class V07Controller: ObservableObject {
                 refreshServer()
             } catch {
                 pending.upload.cancel(); pending.pipe.cancel(); pending.destination?.cancel()
-                if case ServerClientError.finishNotAccepted = error { pending.sealed = false }
                 if !pending.sealed { Task { try? await connection.cancel(id) } }
                 guard !Task.isCancelled else { return }
                 if sessionID == current {
