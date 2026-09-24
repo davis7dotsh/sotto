@@ -125,14 +125,14 @@ sys.stdin.read()
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--engine", type=Path, default=ROOT / ".build/server-llama/sotto-text-engine")
+    parser.add_argument("--engine", type=Path, default=ROOT / ".build/server-llama/v07-text-engine")
     parser.add_argument("--model", type=Path, required=True)
     add_prompt_arguments(parser)
     arguments = parser.parse_args()
     prompt = load_cleanup_prompt(arguments)
     executable = arguments.engine.resolve()
     model = arguments.model.resolve()
-    missing = subprocess.run([str(executable), "--model", "/nonexistent/sotto-gguf-test-model"],
+    missing = subprocess.run([str(executable), "--model", "/nonexistent/v07-gguf-test-model"],
                              capture_output=True, text=True, timeout=10)
     assert missing.returncode != 0 and json.loads(missing.stdout)["type"] == "error"
     print("Passed: missing GGUF fails safely", flush=True)

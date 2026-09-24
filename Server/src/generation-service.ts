@@ -727,8 +727,8 @@ export class GenerationService {
           "invalid_limit",
           "History page size must be between 1 and 100.",
         );
-      if (source !== undefined && source !== "wispr-flow" && source !== "sotto")
-        throw new ServiceError(400, "invalid_source", "Choose Wispr Flow or Sotto history.");
+      if (source !== undefined && source !== "wispr-flow" && source !== "v07")
+        throw new ServiceError(400, "invalid_source", "Choose Wispr Flow or V07 history.");
       const sorted = [...this.records.values()]
         .filter((record) =>
           !source || source === "wispr-flow"

@@ -1,7 +1,7 @@
 # Generated language bindings use this file as their source of truth.
 openapi: "3.1.0"
 info:
-  title: "Sotto API"
+  title: "V07 API"
   version: "1.0.0"
   description: "Shared transport contract for the Swift client and TypeScript server. Optional properties are omitted rather than encoded as null. Dates use whole-second ISO8601 UTC timestamps."
 servers:
@@ -10,12 +10,12 @@ servers:
 security:
   -
     bearerAuth: []
-x-sotto-apiVersion: 1
-x-sotto-defaultPort: 8391
-x-sotto-maximumRecordingSeconds: 180
-x-sotto-maximumChunkBytes: 1048576
-x-sotto-maximumArtifactBytes: 8388608
-x-sotto-maximumDictionaryBytes: 8388608
+x-v07-apiVersion: 1
+x-v07-defaultPort: 8391
+x-v07-maximumRecordingSeconds: 180
+x-v07-maximumChunkBytes: 1048576
+x-v07-maximumArtifactBytes: 8388608
+x-v07-maximumDictionaryBytes: 8388608
 paths:
   "/v1/health":
     get:
@@ -95,7 +95,7 @@ paths:
           schema:
             type: "string"
             enum:
-              - "sotto"
+              - "v07"
               - "wispr-flow"
     post:
       operationId: "createGeneration"

@@ -44,7 +44,7 @@ const manifest = (
 ): WisprFlowArtifactManifest => ({ filename, byteCount: data.length, sha256: sha256(data) });
 
 async function fixture() {
-  const directory = await mkdtemp(join(tmpdir(), "sotto-typescript-imports-"));
+  const directory = await mkdtemp(join(tmpdir(), "v07-typescript-imports-"));
   directories.push(directory);
   await ensureDirectory(join(directory, "generations"));
   const records = new Map<string, GenerationRecord>();

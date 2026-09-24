@@ -19,7 +19,7 @@ async function fixture(
   overrides: Partial<InferenceConfiguration> = {},
   pinned = false,
 ) {
-  const directory = await mkdtemp(join(tmpdir(), "sotto-native-inference-"));
+  const directory = await mkdtemp(join(tmpdir(), "v07-native-inference-"));
   const model = join(directory, mode);
   const executable = join(directory, "helper");
   const source = await readFile(new URL("./fixtures/native-helper.ts", import.meta.url), "utf8");
@@ -82,9 +82,10 @@ describe("native inference subprocess protocol", () => {
       tokenBudget: 223,
     });
     expect(progress).toEqual([0, 0.5, 1]);
-    expect(
-      await inference.correct(speech.text, ["Sotto"], "en", "Keep punctuation."),
-    ).toMatchObject({ text: "Hello world.", engineVersion: "fixture-1" });
+    expect(await inference.correct(speech.text, ["V07"], "en", "Keep punctuation.")).toMatchObject({
+      text: "Hello world.",
+      engineVersion: "fixture-1",
+    });
   });
 
   test("requests may span stdout reads and diagnostics are drained", async () => {
@@ -256,7 +257,7 @@ describe("native inference subprocess protocol", () => {
 
   test("missing proof assets do not block speech-only readiness", async () => {
     const { inference, configuration } = await fixture("no-ready", {
-      proofModel: "/nonexistent/sotto-proof-model",
+      proofModel: "/nonexistent/v07-proof-model",
     });
     expect((await inference.readiness(false)).available).toBe(true);
     expect((await inference.readiness(true)).available).toBe(false);

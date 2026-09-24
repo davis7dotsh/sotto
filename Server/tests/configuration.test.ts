@@ -10,24 +10,24 @@ afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
 });
 const environment = {
-  SOTTO_SERVER_DATA_DIR: "/tmp/sotto-config",
-  SOTTO_ENGINE_PATH: "/tmp/speech",
-  SOTTO_SPEECH_MODEL: "/tmp/speech-model",
-  SOTTO_VAD_PATH: "/tmp/vad",
-  SOTTO_TEXT_ENGINE_PATH: "/tmp/proof",
-  SOTTO_TEXT_MODEL: "/tmp/proof-model",
+  V07_SERVER_DATA_DIR: "/tmp/v07-config",
+  V07_ENGINE_PATH: "/tmp/speech",
+  V07_SPEECH_MODEL: "/tmp/speech-model",
+  V07_VAD_PATH: "/tmp/vad",
+  V07_TEXT_ENGINE_PATH: "/tmp/proof",
+  V07_TEXT_MODEL: "/tmp/proof-model",
 };
 
 test("CLI overrides environment and uses independent explicit model/data paths", async () => {
   const configuration = await parseConfiguration(["--port", "8392", "--dev"], {
     ...environment,
-    SOTTO_SERVER_PORT: "8391",
+    V07_SERVER_PORT: "8391",
   });
   expect(configuration).toMatchObject({
     host: "127.0.0.1",
     port: 8392,
     development: true,
-    dataDirectory: "/tmp/sotto-config",
+    dataDirectory: "/tmp/v07-config",
     inference: { speechHelper: "/tmp/speech", proofModel: "/tmp/proof-model" },
   });
   for (const port of ["0", "65536", "12oops", "1.2", "NaN"])
@@ -40,7 +40,7 @@ test("remote listeners require a bounded regular UTF8 token file", async () => {
   await expect(parseConfiguration(["--host", "0.0.0.0"], environment)).rejects.toThrow(
     "requires a token",
   );
-  const directory = await mkdtemp(join(tmpdir(), "sotto-config-"));
+  const directory = await mkdtemp(join(tmpdir(), "v07-config-"));
   directories.push(directory);
   const file = join(directory, "token");
   await writeFile(file, `${"x".repeat(32)}\n`);

@@ -20,7 +20,7 @@ import wave
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--endpoint", default=os.environ.get("SOTTO_SERVER_URL", "http://127.0.0.1:8391"))
+    parser.add_argument("--endpoint", default=os.environ.get("V07_SERVER_URL", "http://127.0.0.1:8391"))
     parser.add_argument("--token-file", type=Path)
     parser.add_argument("--audio-fixture", type=Path, help="Public mono 16 kHz PCM16 WAV; defaults to whisper.cpp's JFK sample")
     parser.add_argument("--keep-results", action="store_true", help="Keep the two synthetic generations for UI inspection")

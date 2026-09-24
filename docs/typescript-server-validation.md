@@ -36,7 +36,7 @@ Workflow actions now use verified immutable revisions.
 
 The new server uses `http://localhost:8392` and `.local/typescript-server` for data.
 Its own packaged helper copies load existing model files read-only. The installed
-server at port 8391, its archive, and the running Sotto client were left untouched.
+server at port 8391, its archive, and the running V07 client were left untouched.
 
 ## Distribution limits
 

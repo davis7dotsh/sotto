@@ -1,3 +1,3 @@
 cmake_minimum_required(VERSION 3.20)
-project(sotto LANGUAGES C CXX)
+project(v07 LANGUAGES C CXX)
 add_subdirectory(Engine)
