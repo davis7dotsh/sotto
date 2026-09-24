@@ -70,17 +70,17 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run --cwd Server build --target=${{ matrix.target }}
       - name: Smoke compiled executable
-        run: ./build/server/sotto-server --help
+        run: ./build/server/v07-server --help
       - name: Test compiled HTTP server
-        run: bun Server/scripts/smoke.ts --executable ./build/server/sotto-server
+        run: bun Server/scripts/smoke.ts --executable ./build/server/v07-server
       - name: Verify native directory lock and compiled FFI
         run: bun test Server/tests/data-lock.test.ts
       - name: Verify embedded correction worker
         run: bun test Server/tests/correction-worker-standalone.test.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sotto-server-coordinator-${{ matrix.target }}
-          path: build/server/sotto-server
+          name: v07-server-coordinator-${{ matrix.target }}
+          path: build/server/v07-server
           if-no-files-found: error
 
   native:
@@ -105,17 +105,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cmake build-essential pkg-config libcurl4-openssl-dev
       - name: Build portable CPU package
         env:
-          SOTTO_NATIVE: "OFF"
-          SOTTO_CUDA: "OFF"
-          SOTTO_BUILD_JOBS: "4"
+          V07_NATIVE: "OFF"
+          V07_CUDA: "OFF"
+          V07_BUILD_JOBS: "4"
         run: ./scripts/build-server.sh
-      - run: ./build/server/sotto-server --help
+      - run: ./build/server/v07-server --help
       - name: Test packaged HTTP server
-        run: bun Server/scripts/smoke.ts --executable ./build/server/sotto-server
+        run: bun Server/scripts/smoke.ts --executable ./build/server/v07-server
       - name: Archive complete platform package
-        run: tar -czf build/sotto-server-${{ matrix.platform }}-cpu.tar.gz -C build server
+        run: tar -czf build/v07-server-${{ matrix.platform }}-cpu.tar.gz -C build server
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sotto-server-${{ matrix.platform }}-cpu
-          path: build/sotto-server-${{ matrix.platform }}-cpu.tar.gz
+          name: v07-server-${{ matrix.platform }}-cpu
+          path: build/v07-server-${{ matrix.platform }}-cpu.tar.gz
           if-no-files-found: error

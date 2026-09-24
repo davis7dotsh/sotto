@@ -7,7 +7,7 @@ import {
   processingRecord,
 } from "../src/domain/correction.ts";
 
-// The pairs below mirror SottoDomainTests/TextCorrectionPolicyTests.swift.
+// The pairs below mirror V07DomainTests/TextCorrectionPolicyTests.swift.
 const accept = (original: string, candidate: string, preferredTerms: string[] = []) => {
   expect(evaluateCorrection(original!, candidate!, preferredTerms).rejectionReason).toBeUndefined();
 };

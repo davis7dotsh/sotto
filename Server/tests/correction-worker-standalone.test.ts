@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { standaloneBuildSettings } from "../scripts/standalone-build-settings.ts";
 
 test("production standalone manifest runs the embedded correction worker", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "sotto-worker-standalone-"));
+  const directory = await mkdtemp(join(tmpdir(), "v07-worker-standalone-"));
   const executable = join(directory, "correction-worker-probe");
   try {
     const built = await Bun.build({

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { readRegularFile } from "../src/storage.ts";
 
 test("regular archive reads reject a FIFO without blocking", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "sotto-storage-test-"));
+  const directory = await mkdtemp(join(tmpdir(), "v07-storage-test-"));
   try {
     const fifo = join(directory, "metadata.json");
     const process = Bun.spawn(["mkfifo", fifo], { stdout: "ignore", stderr: "ignore" });

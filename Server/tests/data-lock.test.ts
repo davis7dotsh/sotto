@@ -6,7 +6,7 @@ import { acquireDataDirectoryLock } from "../src/data-lock";
 
 const directories: string[] = [];
 function temporaryDirectory() {
-  const directory = mkdtempSync(join(tmpdir(), "sotto-lock-test-"));
+  const directory = mkdtempSync(join(tmpdir(), "v07-lock-test-"));
   directories.push(directory);
   return directory;
 }
@@ -20,7 +20,7 @@ describe("data directory ownership", () => {
     const directory = temporaryDirectory();
     const first = acquireDataDirectoryLock(directory);
     try {
-      expect(() => acquireDataDirectoryLock(directory)).toThrow("Another Sotto server");
+      expect(() => acquireDataDirectoryLock(directory)).toThrow("Another V07 server");
       const independent = acquireDataDirectoryLock(join(directory, "independent"));
       independent.release();
     } finally {
@@ -104,7 +104,7 @@ describe("cross-process and compiled locking", () => {
   let compiledDirectory: string;
   let executable: string;
   beforeAll(async () => {
-    compiledDirectory = mkdtempSync(join(tmpdir(), "sotto-lock-binary-"));
+    compiledDirectory = mkdtempSync(join(tmpdir(), "v07-lock-binary-"));
     executable = join(compiledDirectory, "lock-probe");
     const result = await Bun.build({
       entrypoints: [fixture],
@@ -128,7 +128,7 @@ import fcntl, os, subprocess, sys
 with open(os.path.join(sys.argv[1], '.server.lock'), 'a+') as file:
     fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     result = subprocess.run(sys.argv[2:], capture_output=True, text=True)
-    if result.returncode != 1 or 'Another Sotto server' not in result.stderr:
+    if result.returncode != 1 or 'Another V07 server' not in result.stderr:
         print(result.stdout, result.stderr)
         sys.exit(1)
 `,
@@ -150,7 +150,7 @@ with open(os.path.join(sys.argv[1], '.server.lock'), 'a+') as file:
       try {
         const ready = await child.stdout.getReader().read();
         expect(new TextDecoder().decode(ready.value)).toContain("acquired");
-        expect(() => acquireDataDirectoryLock(directory)).toThrow("Another Sotto server");
+        expect(() => acquireDataDirectoryLock(directory)).toThrow("Another V07 server");
       } finally {
         child.kill("SIGKILL");
         await child.exited;

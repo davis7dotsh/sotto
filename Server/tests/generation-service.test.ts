@@ -70,7 +70,7 @@ afterEach(async () => {
   }
 });
 async function setup(inference = new FakeInference()) {
-  const path = await mkdtemp(join(tmpdir(), "sotto-generation-test-"));
+  const path = await mkdtemp(join(tmpdir(), "v07-generation-test-"));
   const service = await GenerationService.open(
     { dataDirectory: path, development: true },
     inference,
@@ -237,10 +237,10 @@ test("history pagination and source filters remain stable", async () => {
   await service.cancel(first.id);
   const second = await service.create(request());
   await service.cancel(second.id);
-  const page = await service.history(1, undefined, "sotto");
+  const page = await service.history(1, undefined, "v07");
   expect(page.items).toHaveLength(1);
   expect(page.nextCursor).toBeDefined();
-  expect((await service.history(1, page.nextCursor, "sotto")).items[0]?.id).not.toBe(
+  expect((await service.history(1, page.nextCursor, "v07")).items[0]?.id).not.toBe(
     page.items[0]?.id,
   );
   expect((await service.history(50, undefined, "wispr-flow")).items).toHaveLength(0);

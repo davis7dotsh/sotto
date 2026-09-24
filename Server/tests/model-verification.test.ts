@@ -10,7 +10,7 @@ let model: string;
 let pin: ModelPin;
 
 beforeAll(async () => {
-  directory = await mkdtemp(join(tmpdir(), "sotto-shared-model-verification-"));
+  directory = await mkdtemp(join(tmpdir(), "v07-shared-model-verification-"));
   model = join(directory, "model.bin");
   // Real bounded reads exercise cancellation while hashing without mocking the
   // verifier or installing any production integrity bypass.

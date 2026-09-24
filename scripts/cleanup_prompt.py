@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def add_prompt_arguments(parser):
     parser.add_argument("--prompt", type=Path, help="Cleanup system prompt file; defaults to the server's canonical prompt")
-    parser.add_argument("--server", type=Path, default=ROOT / ".build/debug/sotto-server",
+    parser.add_argument("--server", type=Path, default=ROOT / ".build/debug/v07-server",
                         help="Server executable used to export the canonical default prompt")
 
 

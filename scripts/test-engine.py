@@ -129,14 +129,14 @@ sys.stdin.read()
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--engine", type=Path, default=ROOT / ".build/native/Engine/sotto-engine")
+    parser.add_argument("--engine", type=Path, default=ROOT / ".build/native/Engine/v07-engine")
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--vad-model", type=Path, default=DEFAULT_VAD)
     parser.add_argument("--audio", type=Path, default=ROOT / "vendor/whisper.cpp/bindings/go/samples/jfk.wav")
     args = parser.parse_args()
 
     missing = subprocess.run(
-        [str(args.engine), "--model", "/nonexistent/sotto-test-model"],
+        [str(args.engine), "--model", "/nonexistent/v07-test-model"],
         capture_output=True, text=True, timeout=10,
     )
     assert missing.returncode != 0
@@ -151,7 +151,7 @@ def main():
     assert json.loads(missing_vad.stdout)["type"] == "error"
     print("Passed: a missing speech detector fails safely", flush=True)
 
-    with tempfile.TemporaryDirectory(prefix="sotto-engine-test-") as directory:
+    with tempfile.TemporaryDirectory(prefix="v07-engine-test-") as directory:
         temporary = Path(directory)
         with tempfile.TemporaryFile(mode="w+") as diagnostics:
             engine = Engine(args.engine, args.model, diagnostics, args.vad_model)

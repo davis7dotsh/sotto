@@ -7,9 +7,9 @@ import { join, resolve } from "node:path";
 
 const executableIndex = process.argv.indexOf("--executable");
 const executable = resolve(
-  executableIndex >= 0 ? process.argv[executableIndex + 1]! : "build/server/sotto-server",
+  executableIndex >= 0 ? process.argv[executableIndex + 1]! : "build/server/v07-server",
 );
-const directory = await mkdtemp(join(tmpdir(), "sotto-compiled-smoke-"));
+const directory = await mkdtemp(join(tmpdir(), "v07-compiled-smoke-"));
 const listener = createServer();
 await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
 const address = listener.address();

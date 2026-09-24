@@ -13,7 +13,7 @@ afterEach(async () => {
   for (const close of cleanup.splice(0)) await close();
 });
 async function fixture(token?: string) {
-  const directory = await mkdtemp(join(tmpdir(), "sotto-http-"));
+  const directory = await mkdtemp(join(tmpdir(), "v07-http-"));
   const service = await GenerationService.open(
     { dataDirectory: directory, development: true },
     new FakeInference(),

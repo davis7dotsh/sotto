@@ -42,22 +42,22 @@ jobs:
         run: bun test Server/tests/correction-worker-standalone.test.ts
       - name: Build complete platform package
         env:
-          SOTTO_NATIVE: "OFF"
-          SOTTO_CUDA: "OFF"
-          SOTTO_BUILD_JOBS: "4"
+          V07_NATIVE: "OFF"
+          V07_CUDA: "OFF"
+          V07_BUILD_JOBS: "4"
         run: ./scripts/build-server.sh
-      - run: ./build/server/sotto-server --help
+      - run: ./build/server/v07-server --help
       - name: Test packaged HTTP server
-        run: bun Server/scripts/smoke.ts --executable ./build/server/sotto-server
+        run: bun Server/scripts/smoke.ts --executable ./build/server/v07-server
       - name: Package and checksum
         run: |
           cd build
-          tar -czf sotto-server-${{ matrix.platform }}.tar.gz server
-          shasum -a 256 sotto-server-${{ matrix.platform }}.tar.gz > sotto-server-${{ matrix.platform }}.tar.gz.sha256
+          tar -czf v07-server-${{ matrix.platform }}.tar.gz server
+          shasum -a 256 v07-server-${{ matrix.platform }}.tar.gz > v07-server-${{ matrix.platform }}.tar.gz.sha256
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sotto-server-${{ matrix.platform }}
+          name: v07-server-${{ matrix.platform }}
           path: |
-            build/sotto-server-${{ matrix.platform }}.tar.gz
-            build/sotto-server-${{ matrix.platform }}.tar.gz.sha256
+            build/v07-server-${{ matrix.platform }}.tar.gz
+            build/v07-server-${{ matrix.platform }}.tar.gz.sha256
           if-no-files-found: error
