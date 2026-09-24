@@ -103,7 +103,7 @@ struct V07Mark: View {
     var size: CGFloat = 26
 
     var body: some View {
-        V07Ribbon()
+        V07Logo()
             .fill(color)
             .frame(width: size, height: size)
             .accessibilityHidden(true)
