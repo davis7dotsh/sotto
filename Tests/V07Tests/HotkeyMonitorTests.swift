@@ -627,6 +627,244 @@ final class HotkeyMonitorTests: XCTestCase {
         XCTAssertEqual(fixture.presses, 1)
         fixture.monitor.stop()
     }
+
+    @MainActor
+    func testSingleTapDoesNotStartRecordingInDoubleTapMode() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 0)
+        XCTAssertEqual(fixture.releases, 0)
+        XCTAssertEqual(fixture.cancels, 0)
+
+        fixture.time += 2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 0, "A lone tap must not latch recording")
+    }
+
+    @MainActor
+    func testDoubleTapLatchesRecordingUntilSecondDoubleTap() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 1)
+
+        // Recording stays latched after the key is released; ordinary taps
+        // while latched must not stop or restart it.
+        fixture.time += 5
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 1)
+        XCTAssertEqual(fixture.releases, 0)
+
+        fixture.time += 0.2
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.releases, 1, "The second double tap must end the latched take")
+        XCTAssertEqual(fixture.presses, 1)
+        XCTAssertEqual(fixture.cancels, 0)
+    }
+
+    @MainActor
+    func testTapsOutsideTheDoubleTapWindowDoNotToggle() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+
+        try fixture.tap()
+        fixture.time += HotkeyMonitor.doubleTapWindow + 0.05
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 0)
+
+        fixture.time += HotkeyMonitor.doubleTapWindow + 0.05
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 1, "A fresh pair inside the window toggles recording on")
+    }
+
+    @MainActor
+    func testEscapeCancelsALatchedDoubleTapRecording() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 1)
+
+        try fixture.send(.keyDown, code: 53)
+        XCTAssertEqual(fixture.cancels, 1, "Escape must cancel the latched take")
+        XCTAssertEqual(fixture.releases, 0)
+
+        // The latch-only cancel must not arm the chord block: the next
+        // double tap starts a fresh take instead of being swallowed.
+        fixture.time += 1
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 2)
+        XCTAssertEqual(fixture.releases, 0)
+        XCTAssertEqual(fixture.cancels, 1)
+    }
+
+    @MainActor
+    func testDuplicateFnReleaseEdgesCountAsOneTap() async throws {
+        let fixture = HotkeyFixture(key: .fn)
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+
+        // Some devices report one physical release as keyUp followed by a
+        // flagsChanged clear; both edges reach release().
+        fixture.setPhysicalHold(true)
+        try fixture.send(.keyDown, code: HoldKey.fn.keyCode)
+        fixture.setPhysicalHold(false)
+        try fixture.send(.keyUp, code: HoldKey.fn.keyCode)
+        try fixture.flagsChanged()
+        fixture.time += 0.2
+        try fixture.tap()
+
+        XCTAssertEqual(fixture.presses, 1, "Duplicate release edges must count as one tap")
+        XCTAssertEqual(fixture.releases, 0)
+    }
+
+    @MainActor
+    func testChordTapDoesNotCountAsToggleTap() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+
+        try fixture.tap()
+        fixture.time += 0.2
+        // Option+A is an ordinary shortcut; its release must not complete a pair.
+        try fixture.press()
+        try fixture.send(.keyDown, code: 0)
+        try fixture.release()
+        XCTAssertEqual(fixture.presses, 0, "A chord tap must not serve as the second tap")
+
+        fixture.time += HotkeyMonitor.doubleTapWindow + 0.05
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 0, "The window still runs from the last clean tap")
+    }
+
+    @MainActor
+    func testSwitchingModeCancelsLatchedRecording() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 1)
+
+        fixture.monitor.mode = .hold
+        XCTAssertEqual(fixture.cancels, 1, "Leaving double-tap mode must not leave a latched take")
+        try fixture.press()
+        fixture.delays.last?.fire()
+        try fixture.release()
+        XCTAssertEqual(fixture.presses, 2, "Hold mode must require a fresh hold after the switch")
+        XCTAssertEqual(fixture.releases, 1)
+    }
+    @MainActor
+    func testRejectedStartDoesNotLatchDoubleTapRecording() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+
+        try fixture.tap()
+        fixture.time += 0.2
+        fixture.pressAccepted = false
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 1, "The second tap reached the controller")
+        fixture.pressAccepted = true
+
+        // No phantom latch: the next double tap requests a fresh start.
+        fixture.time += 1
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 2)
+        XCTAssertEqual(fixture.releases, 0)
+    }
+
+    @MainActor
+    func testClearLatchedTakeLetsTheNextDoubleTapStartAFreshTake() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 1)
+
+        fixture.monitor.clearLatchedTake()
+        fixture.time += 1
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 2, "A cleared latch must not swallow the next double tap")
+        XCTAssertEqual(fixture.releases, 0)
+    }
+
+    @MainActor
+    func testWatchdogRecoveredReleaseRegistersOneTapAndLateUpEdgesAreIgnored() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+
+        // The key-down edge arrives but the key-up event is lost; the
+        // watchdog's hardware query reports the release and registers the tap.
+        try fixture.press()
+        fixture.down = false
+        fixture.time += 0.15
+        fixture.timers.first { $0.interval == 0.12 }?.call.fire()
+        fixture.time += 0.2
+        try fixture.tap()
+
+        XCTAssertEqual(fixture.presses, 1, "A watchdog-recovered release counts as the first tap")
+        XCTAssertEqual(fixture.releases, 0)
+
+        // The delayed real up edge must not register a second tap.
+        try fixture.flagsChanged()
+        XCTAssertEqual(fixture.presses, 1, "A late release edge after recovery must be ignored")
+    }
+
+    @MainActor
+    func testAutorepeatCompanionsDoNotBlockOrRetriggerADoubleTap() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+
+        try fixture.press()
+        try fixture.send(.keyDown, code: HoldKey.rightOption.keyCode, isRepeat: true)
+        try fixture.send(.keyDown, code: HoldKey.rightOption.keyCode, isRepeat: true)
+        try fixture.release()
+        fixture.time += 0.2
+        try fixture.tap()
+
+        XCTAssertEqual(fixture.presses, 1, "Autorepeats while the key is down must not block or retrigger the tap")
+        XCTAssertEqual(fixture.releases, 0)
+    }
 }
 
 private final class FakeHotkeyTap {
@@ -664,6 +902,7 @@ private final class HotkeyFixture {
     var down = false
     var flags: CGEventFlags = []
     var physicalReads = 0
+    var time: TimeInterval = 100
     var canCreateTap = true
     var taps: [FakeHotkeyTap] = []
     var delays: [ScheduledHotkeyCall] = []
@@ -686,6 +925,7 @@ private final class HotkeyFixture {
             return physicalStateQuery?(key) ?? down
         }
         environment.flags = { [unowned self] in flags }
+        environment.now = { [unowned self] in time }
         environment.createTap = { [unowned self] _ in
             guard canCreateTap else { return nil }
             let tap = FakeHotkeyTap()
@@ -704,12 +944,18 @@ private final class HotkeyFixture {
         }
         let monitor = HotkeyMonitor(environment: environment)
         monitor.key = initialKey
-        monitor.onPress = { [weak self] in self?.presses += 1 }
+        monitor.onPress = { [weak self] in
+            guard let self else { return true }
+            presses += 1
+            return pressAccepted
+        }
         monitor.onRelease = { [weak self] in self?.releases += 1 }
         monitor.onCancel = { [weak self] in self?.cancels += 1 }
         monitor.onStatusChange = { [weak self] in self?.statuses.append($0) }
         return monitor
     }()
+
+    var pressAccepted = true
 
     func healthCheck() { timers.first { $0.interval == 2 }?.call.fire() }
     func setPhysicalHold(_ isDown: Bool) {
@@ -723,6 +969,7 @@ private final class HotkeyFixture {
     }
     func press() throws { setPhysicalHold(true); try flagsChanged() }
     func release() throws { setPhysicalHold(false); try flagsChanged() }
+    func tap() throws { try press(); try release() }
     func flagsChanged() throws { try send(.flagsChanged, code: monitor.key.keyCode) }
     func send(_ type: CGEventType, code: CGKeyCode, isRepeat: Bool = false) throws {
         let source = try XCTUnwrap(CGEventSource(stateID: .privateState))

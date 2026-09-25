@@ -98,6 +98,13 @@ final class V07Controller: ObservableObject {
             hotkey.key = shortcut
         }
     }
+    @Published var activationMode: HotkeyActivationMode = .hold {
+        didSet {
+            guard activationMode != oldValue else { return }
+            if !applyingConfiguration { configuration.update { $0.activationMode = activationMode.rawValue } }
+            hotkey.mode = activationMode
+        }
+    }
     @Published var launchAtLogin = false {
         didSet {
             guard hasInitialized, !applyingConfiguration, !updatingLogin, launchAtLogin != oldValue else { return }
@@ -258,6 +265,7 @@ final class V07Controller: ObservableObject {
         guard !isBusy, !isShuttingDown else { return }
         applyingConfiguration = true
         if let key = HoldKey(rawValue: settings.holdKey), shortcut != key { shortcut = key }
+        if let mode = HotkeyActivationMode(rawValue: settings.activationMode), activationMode != mode { activationMode = mode }
         if launchAtLogin != settings.launchAtLogin { launchAtLogin = settings.launchAtLogin }
         if muteOutputWhileRecording != settings.muteOutputWhileRecording { muteOutputWhileRecording = settings.muteOutputWhileRecording }
         applyingConfiguration = false
@@ -729,6 +737,7 @@ final class V07Controller: ObservableObject {
 
     private func resetSession() {
         sessionID = UUID()
+        hotkey.clearLatchedTake()
         microphoneStartTask?.cancel(); microphoneStartTask = nil
         uploadPipe?.cancel(); uploadPipe = nil
         uploadTask?.cancel(); uploadTask = nil
@@ -813,9 +822,13 @@ final class V07Controller: ObservableObject {
         recorder.onInterruption = { [weak self] message in self?.failSession(message, cancelServer: true) }
         hotkey.onStatusChange = { [weak self] in self?.isHotkeyActive = $0 }
         hotkey.onPress = { [weak self] in
-            guard let self else { return }
-            if isCheckingShortcut { appendShortcutCheck("Shortcut recognized. Recording was intentionally skipped.") }
-            else { beginDictation(isTest: false) }
+            guard let self else { return false }
+            if isCheckingShortcut {
+                appendShortcutCheck("Shortcut recognized. Recording was intentionally skipped.")
+                // No take started, so a double-tap monitor must not latch.
+                return false
+            }
+            return beginDictation(isTest: false)
         }
         hotkey.onRelease = { [weak self] in
             guard let self else { return }
@@ -830,13 +843,16 @@ final class V07Controller: ObservableObject {
         }
     }
 
-    private func beginDictation(isTest: Bool) {
-        guard !isCapturing, !isShuttingDown else { return }
+    /// Returns whether a take actually started. A double-tap monitor latches
+    /// only on true, so a rejected start cannot leave a phantom recording.
+    @discardableResult
+    private func beginDictation(isTest: Bool) -> Bool {
+        guard !isCapturing, !isShuttingDown else { return false }
         stopShortcutCheck()
-        guard isServerReady else { showError(serverStatusMessage); refreshServer(); onShowWindow?(); return }
-        guard permissions.microphone else { showError("Allow microphone access, then try again."); onShowWindow?(); return }
+        guard isServerReady else { showError(serverStatusMessage); refreshServer(); onShowWindow?(); return false }
+        guard permissions.microphone else { showError("Allow microphone access, then try again."); onShowWindow?(); return false }
         guard let input = microphones.resolution.device, let deviceID = audioDevices.deviceID(for: input.uid) else {
-            showError("No microphone is available. Connect an input and try again."); onShowWindow?(); return
+            showError("No microphone is available. Connect an input and try again."); onShowWindow?(); return false
         }
         hudTask?.cancel(); errorMessage = nil
         // Confirmed cursor moves matter only to takes that overlap them.
@@ -916,10 +932,14 @@ final class V07Controller: ObservableObject {
                 refreshServer()
             }
         }
+        return true
     }
 
     private func finishDictation(atLimit: Bool = false) {
         guard isCapturing else { return }
+        // A take ended by the duration limit must not leave a double-tap
+        // latch behind, matching the failure and cancel paths.
+        hotkey.clearLatchedTake()
         recorder.stopAcceptingAudio()
         outputMuter.restore()
         guard activity == .recording else { cancelDictation(); return }

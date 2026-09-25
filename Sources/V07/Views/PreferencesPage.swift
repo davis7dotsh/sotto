@@ -45,6 +45,16 @@ private struct DevicePreferencesForm: View {
                     ForEach(HoldKey.allCases) { key in Text(key.title).tag(key) }
                 }
                 .accessibilityIdentifier("preferences.shortcut")
+                Picker(selection: $controller.activationMode) {
+                    ForEach(HotkeyActivationMode.allCases) { mode in Text(mode.title).tag(mode) }
+                } label: {
+                    Text("Trigger")
+                    Text(controller.activationMode == .doubleTapToggle
+                         ? "Double tap \(controller.shortcut.title) to start and again to stop. Esc cancels."
+                         : "Hold \(controller.shortcut.title) while you talk. Release to stop.")
+                        .foregroundStyle(V07Palette.muted)
+                }
+                .accessibilityIdentifier("preferences.activation")
                 LabeledContent {
                     Button(controller.isCheckingShortcut ? "Stop checking" : "Check shortcut") {
                         if controller.isCheckingShortcut { controller.stopShortcutCheck() }
@@ -76,7 +86,7 @@ private struct DevicePreferencesForm: View {
             Section {
                 PermissionRow(title: "Microphone", detail: "Capture audio while dictating.", granted: controller.permissions.microphone,
                               reviewGranted: true, action: controller.requestMicrophone)
-                PermissionRow(title: "Accessibility", detail: "Recognize your hold key and insert text.", granted: controller.permissions.accessibility,
+                PermissionRow(title: "Accessibility", detail: "Recognize your dictation key and insert text.", granted: controller.permissions.accessibility,
                               reviewGranted: true, action: controller.requestAccessibility)
                 HStack {
                     PermissionHelpButton()
