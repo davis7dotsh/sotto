@@ -179,6 +179,9 @@ final class V07Controller: ObservableObject {
         let destination: InsertionDestinationCapture?
         var task: Task<Void, Never>?
         var sealed = false
+        /// Set once the destination resolves; nil means this take cannot continue a list.
+        var anchor: DictationDestination?
+        var resolved = false
 
         init(session: UUID, id: UUID, client: ServerClient, upload: Task<FinishGenerationRequest, Error>,
              pipe: AudioChunkPipe, destination: InsertionDestinationCapture?) {
@@ -963,10 +966,12 @@ final class V07Controller: ObservableObject {
                     resolved = .clipboard
                 } else { resolved = destination }
                 let anchor: DictationDestination? = test ? .test : resolved.target.flatMap { $0.selection == nil ? nil : .field($0) }
-                // Queued takes must not both extend the last delivered list
-                // snapshot, so only the oldest undelivered take may continue it.
-                finish.continuationID = pendingDictations.first === pending
-                    ? anchor.flatMap { self.continuation(for: $0)?.generationID } : nil
+                pending.anchor = anchor; pending.resolved = true
+                // Queued takes must not both extend the last delivered list snapshot.
+                // An earlier take that is unresolved or shares this anchor suppresses it.
+                let sharesEarlierAnchor = pendingDictations.prefix { $0 !== pending }
+                    .contains { !$0.resolved || $0.anchor == anchor }
+                finish.continuationID = sharesEarlierAnchor ? nil : anchor.flatMap { self.continuation(for: $0)?.generationID }
                 try Task.checkCancellation()
                 pending.sealed = true // The server may accept a seal whose response is interrupted.
                 var result = try await connection.finish(id, value: finish)
