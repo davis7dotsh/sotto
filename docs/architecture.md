@@ -40,11 +40,13 @@ The Mac rechecks destination, selection, protected fields, modifiers, and clipbo
 
 Microphone capture uses input-only Core Audio without changing system routing or playback volume. Route changes apply to the next take. Release, cancellation, sleep/lock, or device loss ends capture.
 
+With **Mute system audio while recording** enabled under **This Mac**, the default output device is muted when a take starts and restored when capture ends. Only mute controls V07 changed are restored, so output that was already muted stays muted. A client crash during a take can leave output muted.
+
 ## Settings
 
 | Scope | Where to edit | What it owns |
 | --- | --- | --- |
-| This Mac | **This Mac** and **Microphone** | Endpoint/token, device name, shortcut, launch at login, microphone priority/selection. |
+| This Mac | **This Mac** and **Microphone** | Endpoint/token, device name, shortcut, launch at login, output muting while recording, microphone priority/selection. |
 | Shared server | **Server preferences** | Language, cleanup prompt, vocabulary, dictionary, proofreading toggle, original-audio retention. |
 | Server process | Command arguments or environment | Bind address, port, data directory, token file, helper/model paths. See [server setup](../Server/README.md). |
 

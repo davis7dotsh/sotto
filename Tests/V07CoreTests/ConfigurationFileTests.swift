@@ -31,9 +31,18 @@ final class ConfigurationFileTests: XCTestCase {
             "[]", "null", #"{"holdKey":null}"#, #"{"holdKey":1}"#,
             #"{"schemaVersion":2}"#, #"{"schemaVersion":true}"#, #"{"holdKey":"function"}"#,
             #"{"launchAtLogin":"true"}"#, #"{"launchAtLogin":null}"#,
+            #"{"muteOutputWhileRecording":"true"}"#, #"{"muteOutputWhileRecording":null}"#,
         ] {
             XCTAssertThrowsError(try decoder.decode(V07Configuration.self, from: Data(json.utf8)), json)
         }
+    }
+
+    func testMuteOutputWhileRecordingIsOptInAndRoundTrips() throws {
+        XCTAssertFalse(V07Configuration.default.muteOutputWhileRecording)
+        let decoded = try JSONDecoder().decode(V07Configuration.self, from: Data(#"{"muteOutputWhileRecording":true}"#.utf8))
+        XCTAssertTrue(decoded.muteOutputWhileRecording)
+        let roundTripped = try JSONDecoder().decode(V07Configuration.self, from: JSONEncoder().encode(decoded))
+        XCTAssertEqual(roundTripped, decoded)
     }
 
     func testStrictMicrophoneValidationDoesNotSilentlyDiscardBadManualEdits() throws {
