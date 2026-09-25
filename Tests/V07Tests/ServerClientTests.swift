@@ -5,6 +5,148 @@ import XCTest
 @testable import V07
 
 final class ServerClientTests: XCTestCase {
+    func testCancelledCreationStillReturnsServerIDForCleanup() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        let request = CreateGenerationRequest(device: .init(id: "test", name: "Test Mac"))
+        let record = GenerationRecord(requestID: request.requestID, device: request.device, settings: .init())
+        let accepted = expectation(description: "Server accepted creation")
+        let releaseResponse = DispatchSemaphore(value: 0)
+        fixture.respond = { _ in
+            accepted.fulfill()
+            guard releaseResponse.wait(timeout: .now() + 5) == .success else { throw URLError(.timedOut) }
+            return (201, try V07API.encodeWire(record))
+        }
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        let creation = Task { try await client.create(request) }
+        await fulfillment(of: [accepted], timeout: 5)
+        creation.cancel()
+        releaseResponse.signal()
+        let returned = try await creation.value
+        XCTAssertEqual(returned.id, record.id)
+        XCTAssertEqual(fixture.requests.count, 1)
+    }
+
+    func testInterruptedEventsRecoverCompletedResultWithoutRepeatingDelivery() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        let queued = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"),
+                                      status: .queued, settings: .init())
+        var completed = queued
+        completed.status = .completed
+        completed.finalText = "Recovered result"
+        let completedRecord = completed
+        fixture.respond = { request in
+            if request.url!.path.hasSuffix("/events") {
+                return (200, try V07API.encodeWire(queued) + Data([10]))
+            }
+            return (200, try V07API.encodeWire(completedRecord))
+        }
+        let updates = GenerationCollector()
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        let result = try await client.events(queued.id) { updates.append($0) }
+        XCTAssertEqual(result.id, completedRecord.id)
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.finalText, completedRecord.finalText)
+        XCTAssertEqual(updates.values.map(\.status), [.queued, .completed])
+        XCTAssertEqual(fixture.requests.count, 2)
+    }
+
+    func testFinishRetriesLostAcknowledgementWithIdenticalFrameCounts() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        let record = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"),
+                                      status: .queued, settings: .init())
+        let bodies = RequestBodyCollector()
+        fixture.respond = { request in
+            bodies.append(try requestBody(request))
+            if bodies.values.count == 1 { throw URLError(.networkConnectionLost) }
+            return (200, try V07API.encodeWire(record))
+        }
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        let result = try await client.finish(record.id, value: .init(inferenceFrames: 8_000))
+        XCTAssertEqual(result.id, record.id)
+        XCTAssertEqual(bodies.values.count, 2)
+        XCTAssertEqual(bodies.values.first, bodies.values.last)
+    }
+
+    func testFinishDoesNotRetryConflictingSeal() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        fixture.respond = { _ in
+            (409, try V07API.encodeWire(APIErrorResponse(code: "conflicting_finish", message: "Different frame counts")))
+        }
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        do {
+            _ = try await client.finish(UUID(), value: .init(inferenceFrames: 8_000))
+            XCTFail("Conflicting seals must fail")
+        } catch ServerClientError.rejected(let status, _) {
+            XCTAssertEqual(status, 409)
+        }
+        XCTAssertEqual(fixture.requests.count, 1)
+    }
+
+    func testFinishStopsReplayingSealAfterBoundedTransientFailures() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        fixture.respond = { _ in throw URLError(.networkConnectionLost) }
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        do {
+            _ = try await client.finish(UUID(), value: .init(inferenceFrames: 8_000))
+            XCTFail("Transient failures must stop retrying within the recovery budget")
+        } catch let error as URLError { XCTAssertEqual(error.code, .networkConnectionLost) }
+        XCTAssertEqual(fixture.requests.map(\.httpMethod), ["POST", "POST", "POST", "POST"])
+    }
+
+    func testCancelledFinishDoesNotRetry() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        fixture.respond = { _ in throw URLError(.cancelled) }
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        do {
+            _ = try await client.finish(UUID(), value: .init(inferenceFrames: 8_000))
+            XCTFail("Cancelled requests must stop immediately")
+        } catch let error as URLError { XCTAssertEqual(error.code, .cancelled) }
+        XCTAssertEqual(fixture.requests.count, 1)
+    }
+
+    func testQueuedEventsReconnectUntilTerminalResult() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        let queued = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"),
+                                      status: .queued, settings: .init())
+        var completed = queued
+        completed.status = .completed
+        let completedRecord = completed
+        fixture.respond = { [weak fixture] request in
+            let reconnect = (fixture?.requests.count ?? 0) == 3
+            let data = try V07API.encodeWire(reconnect ? completedRecord : queued)
+            return (200, data + (request.url!.path.hasSuffix("/events") ? Data([10]) : Data()))
+        }
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        let result = try await client.events(queued.id) { _ in }
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(fixture.requests.map { $0.url!.lastPathComponent },
+                       ["events", queued.id.uuidString, "events"])
+    }
+
+    func testInvalidEventIdentityDoesNotRetryOrDeliverAnotherRecording() async throws {
+        let fixture = HTTPFixture()
+        defer { fixture.session.invalidateAndCancel() }
+        let wrongRecord = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"),
+                                           status: .completed, settings: .init())
+        fixture.respond = { _ in (200, try V07API.encodeWire(wrongRecord) + Data([10])) }
+        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
+        let updates = GenerationCollector()
+        do {
+            _ = try await client.events(UUID()) { updates.append($0) }
+            XCTFail("An unrelated generation must not be delivered")
+        } catch ServerClientError.invalidResponse {
+        }
+        XCTAssertTrue(updates.values.isEmpty)
+        XCTAssertEqual(fixture.requests.count, 1)
+    }
+
     func testConnectionRejectsCredentialsInURLsAndKeepsBearerInHeader() throws {
         XCTAssertThrowsError(try ServerClient(endpoint: "https://person:secret@example.com", token: ""))
         XCTAssertThrowsError(try ServerClient(endpoint: "https://example.com?token=secret", token: ""))
@@ -204,4 +346,11 @@ private final class ChunkCollector: @unchecked Sendable {
     private var chunks: [CapturedAudioChunk] = []
     var values: [CapturedAudioChunk] { lock.withLock { chunks } }
     func append(_ chunk: CapturedAudioChunk) { lock.withLock { chunks.append(chunk) } }
+}
+
+private final class GenerationCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var records: [GenerationRecord] = []
+    var values: [GenerationRecord] { lock.withLock { records } }
+    func append(_ record: GenerationRecord) { lock.withLock { records.append(record) } }
 }

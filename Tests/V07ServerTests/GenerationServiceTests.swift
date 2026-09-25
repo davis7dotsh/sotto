@@ -34,6 +34,106 @@ final class GenerationServiceTests: XCTestCase {
         }
     }
 
+    func testFinishedRecordingsQueueInFinishOrderWhileHealthAndAdmissionStayReady() async throws {
+        try await withFixture(blockSpeech: true) { service, fixture in
+            let first = try await service.create(Self.request())
+            let third = try await service.create(Self.request())
+            let second = try await service.create(Self.request())
+            for record in [first, second, third] {
+                _ = try await service.appendAudio(record.id, kind: .inference, sequence: 0, format: Self.mono, data: Self.audio(frames: 8_000))
+            }
+            _ = try await service.finish(first.id, request: .init(inferenceFrames: 8_000))
+            try await fixture.waitForRequest(first.id)
+            let health = await service.health()
+            XCTAssertTrue(health.ready, health.message ?? "")
+            let receiving = try await service.create(Self.request())
+            _ = try await service.finish(second.id, request: .init(inferenceFrames: 8_000))
+            _ = try await service.finish(third.id, request: .init(inferenceFrames: 8_000))
+            // An idempotent finish must not enqueue the same audio twice.
+            _ = try await service.finish(second.id, request: .init(inferenceFrames: 8_000))
+            let queued = try await service.get(second.id)
+            XCTAssertEqual(queued.status, .queued)
+            _ = try await service.cancel(receiving.id)
+            try fixture.releaseSpeech()
+            for record in [first, second, third] {
+                for await _ in try await service.events(record.id) { }
+                let completed = try await service.get(record.id)
+                XCTAssertEqual(completed.status, .completed, completed.error ?? "")
+            }
+            let requests = try fixture.speechRequests()
+            XCTAssertEqual(requests.count, 3)
+            for (line, record) in zip(requests, [first, second, third]) {
+                XCTAssertTrue(line.contains(record.id.uuidString))
+            }
+        }
+    }
+
+    func testCancellingQueuedAndActiveRecordingsPreservesRemainingQueue() async throws {
+        try await withFixture(blockSpeech: true) { service, fixture in
+            let first = try await service.create(Self.request())
+            let cancelled = try await service.create(Self.request())
+            let last = try await service.create(Self.request())
+            for record in [first, cancelled, last] {
+                _ = try await service.appendAudio(record.id, kind: .inference, sequence: 0, format: Self.mono, data: Self.audio(frames: 8_000))
+                _ = try await service.finish(record.id, request: .init(inferenceFrames: 8_000))
+            }
+            try await fixture.waitForRequest(first.id)
+            _ = try await service.cancel(cancelled.id)
+            let stillActive = try await service.get(first.id)
+            XCTAssertEqual(stillActive.status, .transcribing)
+            _ = try await service.cancel(first.id)
+            try fixture.releaseSpeech()
+            for await _ in try await service.events(last.id) { }
+            let completed = try await service.get(last.id)
+            XCTAssertEqual(completed.status, .completed, completed.error ?? "")
+            for record in [first, cancelled] {
+                let result = try await service.get(record.id)
+                XCTAssertEqual(result.status, .cancelled)
+            }
+            let requests = try fixture.speechRequests()
+            XCTAssertEqual(requests.count, 2)
+            XCTAssertFalse(requests.contains { $0.contains(cancelled.id.uuidString) })
+        }
+    }
+
+    func testRecordingsAreAcceptedBeforeVerifiedHelpersFinishLoading() async throws {
+        let fixture = try Fixture(speechText: "hello", proofText: "hello", blockSpeech: false)
+        defer { fixture.remove() }
+        let service = try GenerationService(configuration: fixture.configuration)
+        do {
+            let health = await service.health()
+            XCTAssertTrue(health.ready, health.message ?? "")
+            XCTAssertFalse(health.speech.ready)
+            let record = try await service.create(Self.request())
+            XCTAssertEqual(record.status, .receiving)
+            _ = try await service.cancel(record.id)
+        } catch {
+            await service.shutdown()
+            throw error
+        }
+        await service.shutdown()
+    }
+
+    func testShutdownTerminatesEveryReceivingQueuedAndProcessingRecording() async throws {
+        try await withFixture(blockSpeech: true) { service, fixture in
+            let first = try await service.create(Self.request())
+            let queued = try await service.create(Self.request())
+            let receiving = try await service.create(Self.request())
+            for record in [first, queued] {
+                _ = try await service.appendAudio(record.id, kind: .inference, sequence: 0, format: Self.mono, data: Self.audio(frames: 8_000))
+                _ = try await service.finish(record.id, request: .init(inferenceFrames: 8_000))
+            }
+            try await fixture.waitForRequest(first.id)
+            await service.shutdown()
+            for record in [first, queued, receiving] {
+                let result = try await service.get(record.id)
+                XCTAssertEqual(result.status, .cancelled)
+            }
+            let health = await service.health()
+            XCTAssertFalse(health.ready)
+        }
+    }
+
     func testChunkReplayGapAndExactFinishCounts() async throws {
         try await withFixture { service, _ in
             let record = try await service.create(Self.request())
@@ -355,9 +455,9 @@ final class GenerationServiceTests: XCTestCase {
     private static func request() -> CreateGenerationRequest { CreateGenerationRequest(device: .init(id: "mac-test", name: "Test Mac")) }
     private static func audio(frames: Int) -> Data { Data(repeating: 0, count: frames * 4) }
 
-    private func withFixture(keepOriginal: Bool = false, speechText: String = "hello code ex.", proofText: String = "Hello Codex.",
+    private func withFixture(keepOriginal: Bool = false, speechText: String = "hello code ex.", proofText: String = "Hello Codex.", blockSpeech: Bool = false,
                              _ work: (GenerationService, Fixture) async throws -> Void) async throws {
-        let fixture = try Fixture(speechText: speechText, proofText: proofText)
+        let fixture = try Fixture(speechText: speechText, proofText: proofText, blockSpeech: blockSpeech)
         let inference = NativeInference(configuration: fixture.configuration.inference)
         try await inference.warmUp()
         let service = try GenerationService(configuration: fixture.configuration, inference: inference)
@@ -375,9 +475,10 @@ final class GenerationServiceTests: XCTestCase {
     private struct Fixture {
         let directory: URL
         let configuration: ServerConfiguration
-        init(speechText: String, proofText: String) throws {
+        init(speechText: String, proofText: String, blockSpeech: Bool) throws {
             directory = FileManager.default.temporaryDirectory.appendingPathComponent("v07-service-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            if blockSpeech { try Data().write(to: directory.appendingPathComponent("hold-speech")) }
             let helper = directory.appendingPathComponent("helper")
             let model = directory.appendingPathComponent("model")
             try Data("fixture model".utf8).write(to: model)
@@ -390,7 +491,10 @@ final class GenerationServiceTests: XCTestCase {
                 id=$(printf '%s' "$line" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
                 case "$line" in
                   *'"type":"correct"'*) text=$(cat "$(dirname "$0")/proof.json") ;;
-                  *) text=$(cat "$(dirname "$0")/speech.json") ;;
+                  *)
+                    printf '%s\n' "$line" >> "$(dirname "$0")/requests.log"
+                    while [ -f "$(dirname "$0")/hold-speech" ]; do sleep 0.01; done
+                    text=$(cat "$(dirname "$0")/speech.json") ;;
                 esac
                 printf '{"type":"result","id":"%s","text":%s,"duration":0.5,"elapsed":0.01,"language":"en"}\n' "$id" "$text"
             done
@@ -401,6 +505,20 @@ final class GenerationServiceTests: XCTestCase {
                                                   proofHelper: helper, proofModel: model)
             runtime.modelVerification = .fixture(speechSHA256: nil, proofSHA256: nil)
             configuration = try ServerConfiguration(dataDirectory: directory.appendingPathComponent("state"), development: true, inference: runtime)
+        }
+        func releaseSpeech() throws {
+            try FileManager.default.removeItem(at: directory.appendingPathComponent("hold-speech"))
+        }
+        func speechRequests() throws -> [String] {
+            try String(contentsOf: directory.appendingPathComponent("requests.log"), encoding: .utf8)
+                .split(separator: "\n").map(String.init)
+        }
+        func waitForRequest(_ id: UUID) async throws {
+            for _ in 0..<500 {
+                if (try? speechRequests().contains { $0.contains(id.uuidString) }) == true { return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            throw ServiceError(500, "test_timeout", "The fixture never received generation \(id).")
         }
         func remove() { try? FileManager.default.removeItem(at: directory) }
     }

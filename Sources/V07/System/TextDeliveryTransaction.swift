@@ -37,6 +37,8 @@ struct TextDeliveryEnvironment {
     var postPaste: (_ canDispatch: () -> Bool) -> PasteDispatch
     var confirmation: (String) async -> DeliveryConfirmation
     var pause: (UInt64) async throws -> Void
+    var waitUntilReady: (() async -> Void)? = nil
+    var isCaptureActive: (() -> Bool)? = nil
 }
 
 /// Owns delivery and its temporary clipboard lease, not application discovery.
@@ -48,10 +50,26 @@ struct TextDeliveryTransaction {
 
     func deliver(_ text: String, copying clipboardText: String, strategy: TextDeliveryStrategy,
                  clipboardUnchangedSince changeCount: Int) async -> InsertionOutcome {
+        while true {
+            await environment.waitUntilReady?()
+            guard !Task.isCancelled else { return .failed(reason: Self.cancelled) }
+            if let outcome = await attemptDelivery(text, copying: clipboardText, strategy: strategy,
+                                                   clipboardUnchangedSince: changeCount) {
+                return outcome
+            }
+        }
+    }
+
+    /// A nil outcome means capture resumed before any text was dispatched.
+    /// Returning first releases any temporary clipboard lease before waiting.
+    private func attemptDelivery(_ text: String, copying clipboardText: String, strategy: TextDeliveryStrategy,
+                                 clipboardUnchangedSince changeCount: Int) async -> InsertionOutcome? {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .failed(reason: "There is no text to deliver.")
         }
-        switch await prepareForDelivery() {
+        let prepared = await prepareForDelivery()
+        if shouldDeferForCapture { return nil }
+        switch prepared {
         case .valid: break
         case .changed(let reason):
             return copyInstead(clipboardText, expectedCount: changeCount, reason: reason)
@@ -90,6 +108,7 @@ struct TextDeliveryTransaction {
 
         let validation = await environment.validate()
         guard !Task.isCancelled else { return .failed(reason: Self.cancelled) }
+        if shouldDeferForCapture { return nil }
         switch validation {
         case .valid: break
         case .blocked(let reason): return .failed(reason: reason)
@@ -106,11 +125,14 @@ struct TextDeliveryTransaction {
         }
         guard !Task.isCancelled else { return .failed(reason: Self.cancelled) }
         switch environment.postPaste({
-            !Task.isCancelled && pasteboard.changeCount == stagedChangeCount
+            !Task.isCancelled && !shouldDeferForCapture && pasteboard.changeCount == stagedChangeCount
         }) {
         case .sent: break
-        case .blocked(let reason): return .failed(reason: reason)
+        case .blocked(let reason):
+            if shouldDeferForCapture { return nil }
+            return .failed(reason: reason)
         case .unavailable:
+            if shouldDeferForCapture { return nil }
             let copied = clipboard.keepBackup(clipboardText, unchangedSince: changeCount)
             return copied ? .copied(reason: "Copied to clipboard") :
                 .failed(reason: "macOS could not send the paste. Your words are ready to copy.")
@@ -126,11 +148,16 @@ struct TextDeliveryTransaction {
 
     private static let cancelled = "Dictation was cancelled. Nothing was copied."
 
+    private var shouldDeferForCapture: Bool {
+        environment.waitUntilReady != nil && environment.isCaptureActive?() == true
+    }
+
     private func prepareForDelivery() async -> TargetValidation {
         for attempt in 0...8 {
             guard !Task.isCancelled else { return .blocked(reason: Self.cancelled) }
             let validation = await environment.validate()
             guard !Task.isCancelled else { return .blocked(reason: Self.cancelled) }
+            if shouldDeferForCapture { return .valid }
             guard validation == .valid else { return validation }
             if !environment.modifiersAreHeld() { return .valid }
             guard attempt < 8 else { break }
@@ -165,9 +192,9 @@ struct TextDeliveryTransaction {
     }
 
     private func copyNewChunk(_ text: String, expectedCount: Int) -> Bool {
-        guard !Task.isCancelled, pasteboard.changeCount == expectedCount,
-              case .success(let snapshot) = ClipboardSnapshot.capture(pasteboard),
-              snapshot.changeCount == expectedCount else { return false }
+        guard !Task.isCancelled, case .success(let snapshot) = ClipboardSnapshot.capture(pasteboard),
+              OwnedPasteboardRevisions.onlyOwnedChanges(on: pasteboard, since: expectedCount,
+                                                        through: snapshot.changeCount) else { return false }
         var clipboard = DeliveryClipboardLease(pasteboard: pasteboard, snapshot: snapshot)
         defer { clipboard.restore() }
         guard clipboard.write(text, transient: false), !Task.isCancelled else { return false }
@@ -204,7 +231,7 @@ private struct DeliveryClipboardLease {
             item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
         }
         guard !Task.isCancelled, pasteboard.changeCount == expectedCount else { return false }
-        let preparedCount = pasteboard.prepareForNewContents(with: .currentHostOnly)
+        let preparedCount = OwnedPasteboardRevisions.prepare(pasteboard)
         ownedChangeCount = preparedCount
         // writeObjects preserves the revision returned by preparation. Never
         // adopt a later revision: it could belong to another clipboard writer.
@@ -214,7 +241,8 @@ private struct DeliveryClipboardLease {
     }
 
     mutating func keepBackup(_ text: String, unchangedSince count: Int) -> Bool {
-        guard snapshot.changeCount == count, ownsClipboard,
+        guard OwnedPasteboardRevisions.onlyOwnedChanges(on: pasteboard, since: count, through: snapshot.changeCount),
+              ownsClipboard,
               write(text, transient: false), !Task.isCancelled else { return false }
         commit()
         return true

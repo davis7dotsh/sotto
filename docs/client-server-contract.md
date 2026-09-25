@@ -26,11 +26,12 @@ API version 1, default port **8391**. [`Server/api/openapi.yaml`](../Server/api/
 | `DELETE /v1/imports/wispr-flow/:id` | Removes unpublished staging session. 204. |
 | `PUT /v1/imports/wispr-flow/dictionary` | Preserves source JSON and immutable digest versions, ≤8 MiB; does not change active dictionary. |
 
-Errors are `APIErrorResponse`; relevant codes 400 invalid input, 401 auth, 404 missing, 409 stale/conflict/busy, 413 limits, 503 unavailable. Bearer authorization on data routes if token configured; nonloopback server binds require a token. Remote connections use HTTPS; localhost and explicit Tailscale endpoints can use HTTP. No credentials in URLs or diagnostics.
+Errors are `APIErrorResponse`; relevant codes 400 invalid input, 401 auth, 404 missing, 409 stale/conflict, 413 limits, 503 unavailable. Bearer authorization on data routes if token configured; nonloopback server binds require a token. Remote connections use HTTPS; localhost and explicit Tailscale endpoints can use HTTP. No credentials in URLs or diagnostics.
 
 ## Generation semantics
 
 - Server owns settings/dictionary, inference, formatting, proofreading, rewrite guards, composition, artifacts and history. Client owns only ephemeral capture/AX anchors and device preferences.
+- Receiving uploads are independent. Finishing a complete upload seals its audio and queues processing in finish order; inference runs serially. Health readiness indicates admission availability, regardless of other receiving, queued, or processing recordings. Cancellation affects only the named generation.
 - Inference audio is mono 16k float32. Original is input microphone format normalized to interleaved float32, retained/uploaded only if the accepted settings snapshot says keepOriginalAudio. Both audio intervals must match. Min take 0.25 s, max 180 s. Only sealed complete uploads run inference.
 - Sequence counts are independent for each audio kind. Server handles incomplete upload expiry, bounded disk and request buffers, validates byte/frame counts and formats, and never accepts caller filesystem paths.
 - Native helpers remain separate persistent processes (independent ggml versions). Whisper everywhere; macOS Qwen MLX; Linux Qwen llama.cpp/GGUF. Server applies current deterministic domain logic; client inserts returned insertionText once with existing destination/caret checks.

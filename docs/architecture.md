@@ -24,13 +24,13 @@ Bun manages all JavaScript dependencies and compiles the coordinator plus its co
 
 ## A recording
 
-1. The client asks the server to create a generation with its device identity. The server freezes shared settings and admits one active job at a time. Offline, busy, or unavailable speech recognition prevents capture.
+1. The client asks the server to create a generation with its device identity. The server freezes shared settings and accepts independent uploads from any connected client. Offline or unavailable speech recognition prevents capture; other recordings do not.
 2. The client pins its microphone and uploads acknowledged, sequenced PCM chunks while recording. Inference audio is mono 16 kHz float32; optional original audio keeps the microphone rate/channels as float32.
-3. Release stops capture, drains uploads, and sends final frame counts. The server checks the complete intervals and seals WAV files. Recordings must be 0.25–180 seconds.
-4. The server runs Whisper, mechanical cleanup, dictionary rules, and list formatting. Optional Qwen output passes through dictionary rules and deterministic rewrite checks. Rejection or proofreading failure retains the pre-proofreading text.
-5. NDJSON events carry progress and the saved final result. The client verifies focus/caret safety, makes one delivery attempt, and reports the outcome separately from inference completion.
+3. Release stops capture, drains uploads, and sends final frame counts. The microphone is available for the next take while earlier uploads finish. The server checks the complete intervals and seals WAV files. Recordings must be 0.25–180 seconds.
+4. Sealed recordings enter a FIFO processing queue. One job at a time runs Whisper, mechanical cleanup, dictionary rules, and list formatting. Optional Qwen output passes through dictionary rules and deterministic rewrite checks. Rejection or proofreading failure retains the pre-proofreading text. Cancelling one upload or queued job does not interrupt another.
+5. NDJSON events carry progress and the saved final result for each generation. Each pending client take retains its original server connection and destination. The client serializes delivery attempts, verifies focus/caret safety, and reports each outcome separately from inference completion.
 
-Interrupted partial uploads expire; a complete upload can finish after the client disconnects. Reconnecting or opening history never pastes an old result. Restarting the server marks unfinished generations failed and retains completed history. There is no offline queue or automatic retry.
+Interrupted partial uploads expire; a complete upload can finish after the client disconnects. Pending takes recover interrupted event streams by checking their saved generation and reconnecting. Opening history never pastes an old result. Restarting the server marks unfinished generations failed and retains completed history. There is no offline capture queue or automatic audio-upload retry.
 
 ## Text delivery
 

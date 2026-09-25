@@ -12,11 +12,11 @@ const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0)) await close();
 });
-async function fixture(token?: string) {
+async function fixture(token?: string, inference = new FakeInference()) {
   const directory = await mkdtemp(join(tmpdir(), "v07-http-"));
   const service = await GenerationService.open(
     { dataDirectory: directory, development: true },
-    new FakeInference(),
+    inference,
   );
   const app = createHTTPServer(service, token);
   cleanup.push(async () => {
@@ -28,6 +28,95 @@ async function fixture(token?: string) {
 }
 
 describe("Fastify API contract", () => {
+  test("queues finished recordings while accepting uploads and routes each result to its device", async () => {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    class QueuedInference extends FakeInference {
+      calls = 0;
+      override async transcribe(...args: Parameters<FakeInference["transcribe"]>) {
+        const number = ++this.calls;
+        if (number === 1) {
+          started.resolve();
+          await release.promise;
+        }
+        return { ...(await super.transcribe(...args)), text: `Recording ${number}.` };
+      }
+    }
+    const inference = new QueuedInference();
+    const { app, service } = await fixture(undefined, inference);
+    const preferences = await service.getPreferences();
+    preferences.preferences.keepOriginalAudio = false;
+    preferences.preferences.textCorrectionEnabled = false;
+    await service.updatePreferences(preferences);
+    const create = async (device: string) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/generations",
+        payload: { requestID: randomUUID(), device: { id: device, name: device }, mode: "test" },
+      });
+      expect(response.statusCode).toBe(201);
+      return validateBody("GenerationRecord", response.json());
+    };
+    const finish = async (id: string) => {
+      const uploaded = await app.inject({
+        method: "POST",
+        url: `/v1/generations/${id}/audio/inference?sequence=0&sampleRate=16000&channels=1`,
+        headers: { "content-type": "application/octet-stream" },
+        payload: Buffer.alloc(16_000),
+      });
+      expect(uploaded.statusCode).toBe(200);
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/generations/${id}/finish`,
+        payload: { inferenceFrames: 4000 },
+      });
+      expect(response.statusCode).toBe(202);
+    };
+    try {
+      const first = await create("first-mac");
+      await finish(first.id);
+      await started.promise;
+      const second = await create("second-mac");
+      await finish(second.id);
+      expect((await service.get(second.id)).status).toBe("queued");
+      const abandoned = await create("first-mac");
+      const cancelled = await app.inject({
+        method: "POST",
+        url: `/v1/generations/${abandoned.id}/cancel`,
+      });
+      expect(cancelled.json().status).toBe("cancelled");
+      expect((await app.inject("/v1/health")).json().ready).toBe(true);
+      expect(inference.calls).toBe(1);
+      const streams = [first, second].map(async (record) => {
+        const response = await app.inject({
+          method: "GET",
+          url: `/v1/generations/${record.id}/events`,
+        });
+        return response.body
+          .trim()
+          .split("\n")
+          .map((line) => validateBody("GenerationRecord", JSON.parse(line)));
+      });
+      release.resolve();
+      const results = await Promise.all(streams);
+      for (const [index, records] of results.entries()) {
+        const expected = [first, second][index]!;
+        expect(
+          records.every(
+            (record) => record.id === expected.id && record.device.id === expected.device.id,
+          ),
+        ).toBe(true);
+        expect(records.at(-1)).toMatchObject({
+          status: "completed",
+          finalText: `Recording ${index + 1}.`,
+        });
+      }
+      expect(inference.calls).toBe(2);
+    } finally {
+      release.resolve();
+    }
+  });
+
   test("Swift-compatible JSON, binary uploads, NDJSON, artifacts and no-body actions", async () => {
     const { app } = await fixture();
     const original = (await app.inject({ method: "GET", url: "/v1/preferences" })).json();
