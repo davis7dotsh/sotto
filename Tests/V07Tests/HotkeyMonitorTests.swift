@@ -865,6 +865,94 @@ final class HotkeyMonitorTests: XCTestCase {
         XCTAssertEqual(fixture.presses, 1, "Autorepeats while the key is down must not block or retrigger the tap")
         XCTAssertEqual(fixture.releases, 0)
     }
+
+    @MainActor
+    func testChordsAndClicksDuringALatchedTakeDoNotCancelIt() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 1)
+
+        fixture.time += 2
+        try fixture.press()
+        try fixture.send(.keyDown, code: 0)
+        try fixture.release()
+        try fixture.press()
+        try fixture.send(.leftMouseDown, code: 0)
+        try fixture.release()
+        XCTAssertEqual(fixture.cancels, 0, "Option+key or Option+click must not throw away a hands-free take")
+        XCTAssertEqual(fixture.releases, 0)
+
+        fixture.time += 2
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.releases, 1, "A clean double tap still ends the take")
+    }
+
+    @MainActor
+    func testFnShortcutsDuringALatchedTakeAreNotToggleTaps() async throws {
+        let fixture = HotkeyFixture(key: .fn)
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 1)
+
+        // fn+Down twice is Page Down twice, not a double tap.
+        for _ in 0..<2 {
+            fixture.time += 0.2
+            try fixture.press()
+            try fixture.send(.keyDown, code: 125)
+            try fixture.release()
+        }
+        XCTAssertEqual(fixture.releases, 0, "Fn shortcuts must not end a hands-free take")
+        XCTAssertEqual(fixture.cancels, 0)
+    }
+
+    @MainActor
+    func testTapRecoveryKeepsALatchedTake() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.presses, 1)
+
+        try fixture.send(.tapDisabledByTimeout, code: 0)
+        fixture.permissions = PermissionSnapshot(microphone: true, accessibility: true, inputMonitoring: true)
+        fixture.healthCheck()
+        XCTAssertEqual(fixture.cancels, 0, "Listener recovery must not throw away a hands-free take")
+
+        fixture.time += 2
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+        XCTAssertEqual(fixture.releases, 1, "The recovered listener still ends the take")
+    }
+
+    @MainActor
+    func testLosingShortcutAccessStillCancelsALatchedTake() async throws {
+        let fixture = HotkeyFixture()
+        fixture.monitor.mode = .doubleTapToggle
+        XCTAssertTrue(fixture.monitor.start())
+        defer { fixture.monitor.stop() }
+        try fixture.tap()
+        fixture.time += 0.2
+        try fixture.tap()
+
+        fixture.permissions = PermissionSnapshot(microphone: true, accessibility: false, inputMonitoring: false)
+        fixture.healthCheck()
+        XCTAssertEqual(fixture.cancels, 1, "Without a listener the take could never be stopped by the key")
+    }
 }
 
 private final class FakeHotkeyTap {

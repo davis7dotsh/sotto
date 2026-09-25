@@ -41,18 +41,12 @@ private struct DevicePreferencesForm: View {
             } header: { Text("Connection").textCase(nil) }
 
             Section {
-                Picker("Hold to dictate", selection: $controller.shortcut) {
+                Picker("Dictation key", selection: $controller.shortcut) {
                     ForEach(HoldKey.allCases) { key in Text(key.title).tag(key) }
                 }
                 .accessibilityIdentifier("preferences.shortcut")
-                Picker(selection: $controller.activationMode) {
+                Picker("Trigger", selection: $controller.activationMode) {
                     ForEach(HotkeyActivationMode.allCases) { mode in Text(mode.title).tag(mode) }
-                } label: {
-                    Text("Trigger")
-                    Text(controller.activationMode == .doubleTapToggle
-                         ? "Double tap \(controller.shortcut.title) to start and again to stop. Esc cancels."
-                         : "Hold \(controller.shortcut.title) while you talk. Release to stop.")
-                        .foregroundStyle(V07Palette.muted)
                 }
                 .accessibilityIdentifier("preferences.activation")
                 LabeledContent {

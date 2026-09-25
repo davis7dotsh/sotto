@@ -209,7 +209,8 @@ final class HotkeyMonitor {
 
     /// An accepted Fn hold is dedicated push-to-talk, not a modifier chord.
     /// Views use this same state to leave Escape available to the focused app.
-    var isHoldingFn: Bool { key == .fn && physicalDown && active }
+    /// A double-tap take is latched, so Fn shortcuts during it stay ordinary.
+    var isHoldingFn: Bool { mode == .hold && key == .fn && physicalDown && active }
     /// An accepted hold or a press still inside its acceptance delay.
     var isHoldInProgress: Bool { active || pendingPressID != nil }
 
@@ -421,7 +422,9 @@ final class HotkeyMonitor {
         guard ensureListeningAccess() else { return }
         active = true
         onDiagnostic?(key == .fn ? "Hold accepted immediately." : "Hold accepted after 180 ms.")
-        onPress?()
+        // A hold stays active even if no take starts, so its release still
+        // reaches the controller (for example, to finish a shortcut check).
+        _ = onPress?()
     }
 
     private func ensureListeningAccess() -> Bool {
@@ -440,7 +443,9 @@ final class HotkeyMonitor {
         pendingPress?.cancel()
         pendingPress = nil
         pendingPressID = nil
-        if active {
+        // A chord only interrupts a physical hold. A latched double-tap take
+        // keeps recording; the blocked press just doesn't count as a tap.
+        if active, mode == .hold {
             active = false
             onCancel?()
         }
@@ -565,7 +570,8 @@ final class HotkeyMonitor {
         if let tap, tap.isValid(), tapAccess == access {
             // All recovery paths cancel an in-flight hold and require a fresh
             // release. start() used to re-enable blindly, retaining stale state.
-            reset(cancelActive: true)
+            // A latched take survives: the rebuilt listener can still end it.
+            reset(cancelActive: true, keepLatch: true)
             blockAlreadyHeldKey()
             tap.setEnabled(true)
             if tap.isValid(), tap.isEnabled() {
@@ -576,7 +582,7 @@ final class HotkeyMonitor {
 
         // CGEventTapCreate may strip keyboard events when permission is missing.
         // Re-enabling an old port cannot add them after a grant changes.
-        discardTap()
+        discardTap(keepLatch: true)
         guard let newTap = environment.createTap(self) else {
             reportStatus(false)
             return false
@@ -597,8 +603,8 @@ final class HotkeyMonitor {
         if physicalDown, tap != nil, !awaitingObservedRelease { armWatchdog() }
     }
 
-    private func discardTap() {
-        reset(cancelActive: true)
+    private func discardTap(keepLatch: Bool = false) {
+        reset(cancelActive: true, keepLatch: keepLatch)
         let previous = tap
         tap = nil
         tapAccess = nil
@@ -611,18 +617,19 @@ final class HotkeyMonitor {
         onStatusChange?(enabled)
     }
 
-    private func reset(cancelActive: Bool) {
+    private func reset(cancelActive: Bool, keepLatch: Bool = false) {
         pendingPress?.cancel()
         pendingPress = nil
         pendingPressID = nil
         let wasActive = active
-        active = false
+        let latched = keepLatch && mode == .doubleTapToggle && active
+        active = latched
         physicalDown = false
         blockedUntilRelease = false
         lastTapAt = nil
         watchdog?.cancel()
         watchdog = nil
-        if cancelActive, wasActive { onCancel?() }
+        if cancelActive, wasActive, !latched { onCancel?() }
     }
 
     deinit {
