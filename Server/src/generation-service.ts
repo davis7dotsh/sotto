@@ -25,6 +25,7 @@ import type { components } from "./generated/api.ts";
 import { decodePersonalDictionary } from "./domain/dictionary.ts";
 import { validateBody } from "./validation.ts";
 import type { InferenceBackend } from "./inference/native-inference.ts";
+import { InferenceError } from "./inference/inference-error.ts";
 import { ServiceError } from "./errors.ts";
 import {
   atomicPrivateWrite,
@@ -168,6 +169,7 @@ export class GenerationService {
   private warmController?: AbortController;
   private warmTask?: Promise<void>;
   private warming = false;
+  private speechLoadFailed = false;
   private stopping = false;
   private timer?: ReturnType<typeof setInterval>;
   private queue: Promise<unknown> = Promise.resolve();
@@ -341,7 +343,7 @@ export class GenerationService {
       writable = false;
     }
     return this.mutate(() => {
-      const ready = state.available && writable && !this.stopping;
+      const ready = state.available && writable && !this.stopping && !this.speechUnloadable(state);
       const message = !writable
         ? "Server storage is unavailable or full."
         : this.stopping
@@ -350,9 +352,11 @@ export class GenerationService {
             ? state.speechLoaded
               ? "Server ready."
               : "Loading server models; recordings will queue."
-            : this.warming
-              ? "Loading server models…"
-              : "Server models are unavailable.";
+            : this.speechUnloadable(state)
+              ? "Speech model failed to load."
+              : this.warming
+                ? "Loading server models…"
+                : "Server models are unavailable.";
       if (!state.speechLoaded) this.beginWarmup();
       return {
         apiVersion: 1,
@@ -428,9 +432,13 @@ export class GenerationService {
           record.device.id === request.device.id,
       );
       if (existing) return copy(existing);
-      if (!state.available) {
+      if (!state.available || this.speechUnloadable(state)) {
         this.beginWarmup();
-        throw new ServiceError(503, "server_unavailable", state.message);
+        throw new ServiceError(
+          503,
+          "server_unavailable",
+          state.available ? "Speech model failed to load." : state.message,
+        );
       }
       if (!state.speechLoaded) this.beginWarmup();
       await requireDiskSpace(this.configuration.dataDirectory);
@@ -1010,8 +1018,7 @@ export class GenerationService {
     // Uploads and subscribers remain independent of this inference-only queue.
     this.processingQueue = this.processingQueue
       .then(async () => {
-        if (this.stopping || controller.signal.aborted) return;
-        await this.warmTask;
+        // Helper loads join any in-flight warmup, so jobs never wait for proofreading to load.
         if (!this.stopping && !controller.signal.aborted)
           await this.process(id, previous, controller.signal);
       })
@@ -1240,12 +1247,26 @@ export class GenerationService {
     this.warmController = controller;
     this.warmTask = this.inference
       .warmUp(this.preferences.preferences.textCorrectionEnabled, controller.signal)
+      .then(
+        () => {
+          this.speechLoadFailed = false;
+        },
+        async (error) => {
+          // A cancelled take or shutdown can interrupt loading; that is not a failure.
+          if (error instanceof InferenceError && error.code === "cancelled") return;
+          this.speechLoadFailed = !(await this.inference.readiness(false)).speechLoaded;
+        },
+      )
       .catch(() => {})
       .finally(() => {
         this.warming = false;
         this.warmController = undefined;
         this.warmTask = undefined;
       });
+  }
+  /** Queue recordings through a reload, but not behind a helper that failed to start. */
+  private speechUnloadable(state: { speechLoaded: boolean }) {
+    return this.speechLoadFailed && !state.speechLoaded;
   }
   private get speechBackend() {
     return process.platform === "darwin" ? "whisper.cpp/Metal" : "whisper.cpp";

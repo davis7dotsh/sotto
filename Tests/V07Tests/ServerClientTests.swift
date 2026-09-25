@@ -86,124 +86,19 @@ final class ServerClientTests: XCTestCase {
         XCTAssertEqual(fixture.requests.count, 1)
     }
 
-    func testFinishReconcilesSealedQueueAndCompletedResultAfterBothAcknowledgementsAreLost() async throws {
-        for status in [GenerationStatus.queued, .completed] {
-            let fixture = HTTPFixture()
-            defer { fixture.session.invalidateAndCancel() }
-            var record = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"),
-                                          status: status, settings: .init())
-            record.inferenceAudio = .init(filename: "inference.wav", sampleRate: 16_000, channels: 1,
-                                          frameCount: 8_000, byteCount: 32_044)
-            record.finalText = status == .completed ? "Recovered sealed take" : ""
-            let sealed = record
-            fixture.respond = { request in
-                if request.httpMethod == "POST" { throw URLError(.networkConnectionLost) }
-                return (200, try V07API.encodeWire(sealed))
-            }
-            let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
-            let result = try await client.finish(sealed.id, value: .init(inferenceFrames: 8_000))
-            XCTAssertEqual(result.id, sealed.id)
-            XCTAssertEqual(result.status, status)
-            XCTAssertEqual(result.finalText, sealed.finalText)
-            XCTAssertEqual(fixture.requests.map(\.httpMethod), ["POST", "POST", "GET"])
-        }
-    }
-
-    func testFinishReplaysIdenticalSealWhenStatusReadOvertakesFinish() async throws {
+    func testFinishStopsReplayingSealAfterBoundedTransientFailures() async throws {
         let fixture = HTTPFixture()
         defer { fixture.session.invalidateAndCancel() }
-        let record = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"), settings: .init())
-        var accepted = record
-        accepted.status = .queued
-        accepted.inferenceAudio = .init(filename: "inference.wav", sampleRate: 16_000, channels: 1,
-                                        frameCount: 8_000, byteCount: 32_044)
-        let sealed = accepted
-        let bodies = RequestBodyCollector()
-        fixture.respond = { request in
-            if request.httpMethod == "POST" {
-                bodies.append(try requestBody(request))
-                if bodies.values.count <= 2 { throw URLError(.networkConnectionLost) }
-                return (200, try V07API.encodeWire(sealed))
-            }
-            return (200, try V07API.encodeWire(record))
-        }
+        fixture.respond = { _ in throw URLError(.networkConnectionLost) }
         let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
-        let result = try await client.finish(record.id, value: .init(inferenceFrames: 8_000))
-        XCTAssertEqual(result.id, record.id)
-        XCTAssertEqual(result.status, .queued)
-        XCTAssertEqual(fixture.requests.map(\.httpMethod), ["POST", "POST", "GET", "POST"])
-        XCTAssertEqual(bodies.values.count, 3)
-        XCTAssertTrue(bodies.values.allSatisfy { $0 == bodies.values.first })
+        do {
+            _ = try await client.finish(UUID(), value: .init(inferenceFrames: 8_000))
+            XCTFail("Transient failures must stop retrying within the recovery budget")
+        } catch let error as URLError { XCTAssertEqual(error.code, .networkConnectionLost) }
+        XCTAssertEqual(fixture.requests.map(\.httpMethod), ["POST", "POST", "POST", "POST"])
     }
 
-    func testFinishReconciliationPreservesFailedSealReasonWithoutArtifacts() async throws {
-        let fixture = HTTPFixture()
-        defer { fixture.session.invalidateAndCancel() }
-        var record = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"),
-                                      status: .failed, settings: .init())
-        record.error = "Audio could not be preserved"
-        let failed = record
-        fixture.respond = { request in
-            if request.httpMethod == "POST" { throw URLError(.networkConnectionLost) }
-            return (200, try V07API.encodeWire(failed))
-        }
-        let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
-        let result = try await client.finish(failed.id, value: .init(inferenceFrames: 8_000))
-        XCTAssertEqual(result.status, .failed)
-        XCTAssertEqual(result.error, failed.error)
-        XCTAssertNil(result.inferenceAudio)
-    }
-
-    func testFinishReconciliationRejectsWrongIdentityOrAudioCounts() async throws {
-        for mismatch in ["identity", "inference", "original"] {
-            let fixture = HTTPFixture()
-            defer { fixture.session.invalidateAndCancel() }
-            let id = UUID()
-            var record = GenerationRecord(id: mismatch == "identity" ? UUID() : id,
-                                          requestID: UUID(), device: .init(id: "test", name: "Test Mac"),
-                                          status: .completed, settings: .init())
-            record.inferenceAudio = .init(filename: "inference.wav", sampleRate: 16_000, channels: 1,
-                                          frameCount: mismatch == "inference" ? 16_000 : 8_000, byteCount: 32_044)
-            if mismatch == "original" {
-                record.originalAudio = .init(filename: "original.wav", sampleRate: 48_000, channels: 1,
-                                             frameCount: 24_000, byteCount: 96_044)
-            }
-            let invalid = record
-            fixture.respond = { request in
-                if request.httpMethod == "POST" { throw URLError(.networkConnectionLost) }
-                return (200, try V07API.encodeWire(invalid))
-            }
-            let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
-            do {
-                _ = try await client.finish(id, value: .init(inferenceFrames: 8_000))
-                XCTFail("Mismatched \(mismatch) must not be delivered")
-            } catch ServerClientError.invalidResponse { }
-            XCTAssertEqual(fixture.requests.count, 3)
-        }
-    }
-
-    func testFinishReconciliationBoundsTransientStatusAndSealFailures() async throws {
-        for canReadStatus in [false, true] {
-            let fixture = HTTPFixture()
-            defer { fixture.session.invalidateAndCancel() }
-            let record = GenerationRecord(requestID: UUID(), device: .init(id: "test", name: "Test Mac"), settings: .init())
-            fixture.respond = { request in
-                if canReadStatus, request.httpMethod == "GET" { return (200, try V07API.encodeWire(record)) }
-                throw URLError(.networkConnectionLost)
-            }
-            let client = try ServerClient(endpoint: fixture.endpoint, token: "", session: fixture.session)
-            do {
-                _ = try await client.finish(record.id, value: .init(inferenceFrames: 8_000))
-                XCTFail("Transient failures must stop retrying within the recovery budget")
-            } catch let error as URLError { XCTAssertEqual(error.code, .networkConnectionLost) }
-            let expected = canReadStatus
-                ? ["POST", "POST", "GET", "POST", "GET", "POST", "GET", "POST"]
-                : ["POST", "POST", "GET", "GET", "GET"]
-            XCTAssertEqual(fixture.requests.map(\.httpMethod), expected)
-        }
-    }
-
-    func testCancelledFinishDoesNotRetryOrReconcile() async throws {
+    func testCancelledFinishDoesNotRetry() async throws {
         let fixture = HTTPFixture()
         defer { fixture.session.invalidateAndCancel() }
         fixture.respond = { _ in throw URLError(.cancelled) }

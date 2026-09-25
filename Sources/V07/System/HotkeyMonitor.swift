@@ -188,6 +188,8 @@ final class HotkeyMonitor {
     /// An accepted Fn hold is dedicated push-to-talk, not a modifier chord.
     /// Views use this same state to leave Escape available to the focused app.
     var isHoldingFn: Bool { key == .fn && physicalDown && active }
+    /// An accepted hold or a press still inside its acceptance delay.
+    var isHoldInProgress: Bool { active || pendingPressID != nil }
 
     var key: HoldKey = .rightOption {
         didSet {

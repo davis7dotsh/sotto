@@ -31,7 +31,7 @@ typeOverrides:
 
 - Supervise existing Whisper and Qwen helpers with fixed argument arrays, bounded JSON-lines parsing, one outstanding request per helper, readiness, warm reuse, deadlines, output validation, and stale-process generation guards.
 - Preserve pinned model verification, optional proofreading fallback, and cancellation by terminating/replacing busy helpers. Preserve idle warm helpers on cancellation.
-- Port generation admission, per-device request idempotency, preference compare-and-swap revisions, chunk sequence/replay validation, finite samples, exact final frame counts, WAV sealing, disk checks, and one active job.
+- Port generation admission, per-device request idempotency, preference compare-and-swap revisions, chunk sequence/replay validation, finite samples, exact final frame counts, WAV sealing, disk checks, and serial FIFO processing.
 - Keep private file permissions, exclusive directory ownership, atomic metadata writes, paginated shared history, allowlisted artifacts, restart recovery, upload expiry, and Wispr Flow staging/reconciliation.
 
 ## Phase 4: Fastify HTTP and executable packaging

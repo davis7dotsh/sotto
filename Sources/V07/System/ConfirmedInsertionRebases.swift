@@ -15,12 +15,5 @@ struct ConfirmedInsertionRebases<Target: Equatable> {
         return entry.confirmed
     }
 
-    /// A released take can settle while the next take is still capturing the
-    /// old cursor. Keep its confirmed movement until both owners have settled.
-    mutating func endBatchIfIdle(isCapturing: Bool, hasPendingDictations: Bool) {
-        guard !isCapturing, !hasPendingDictations else { return }
-        removeAll()
-    }
-
     mutating func removeAll() { entries.removeAll() }
 }

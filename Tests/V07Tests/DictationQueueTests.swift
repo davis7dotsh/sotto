@@ -174,6 +174,48 @@ final class DictationQueueTests: XCTestCase {
     }
 
     @MainActor
+    func testDismissingNewerFailureKeepsEarlierTakeAndReturnsHUDToIt() async throws {
+        let fixture = try QueueControllerFixture()
+        defer { fixture.close() }
+        try await fixture.ready()
+        try await fixture.recordAndRelease()
+        try await waitUntil { fixture.server.finishing.count == 1 }
+        let first = try XCTUnwrap(fixture.server.created.first)
+        try await fixture.recordAndRelease()
+        try await waitUntil { fixture.server.finishing.count == 2 }
+        let second = try XCTUnwrap(fixture.server.created.last)
+
+        fixture.server.fail(second, message: "Second failed")
+        try await waitUntil { fixture.controller.activity == .failed }
+        fixture.controller.cancelDictation()
+        XCTAssertFalse(fixture.server.cancelled.contains(first), "Dismissing a newer failure must not cancel older work")
+        XCTAssertEqual(fixture.controller.activity, .transcribing)
+        fixture.server.complete(first, text: "First take")
+        try await waitUntil { fixture.server.deliveries == [first] && !fixture.controller.isBusy }
+        XCTAssertEqual(fixture.controller.activity, .success)
+        XCTAssertEqual(fixture.controller.lastTranscript, "First take")
+    }
+
+    @MainActor
+    func testDismissingUnrelatedStartErrorDoesNotCancelPendingTake() async throws {
+        let fixture = try QueueControllerFixture()
+        defer { fixture.close() }
+        try await fixture.ready()
+        try await fixture.recordAndRelease()
+        try await waitUntil { fixture.server.finishing.count == 1 }
+        let first = try XCTUnwrap(fixture.server.created.first)
+
+        fixture.controller.permissions = PermissionSnapshot(microphone: false, accessibility: false, inputMonitoring: false)
+        fixture.controller.toggleTestRecording()
+        XCTAssertEqual(fixture.controller.activity, .failed)
+        fixture.controller.cancelDictation()
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertFalse(fixture.server.cancelled.contains(first))
+        fixture.server.complete(first, text: "First take")
+        try await waitUntil { fixture.server.deliveries == [first] && !fixture.controller.isBusy }
+    }
+
+    @MainActor
     func testRepeatedCancellationDrainsPendingTakesAndAllowsAnotherHold() async throws {
         let fixture = try QueueControllerFixture()
         defer { fixture.close() }

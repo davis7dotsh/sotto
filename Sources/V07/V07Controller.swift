@@ -154,10 +154,9 @@ final class V07Controller: ObservableObject {
     private var microphoneStartTask: Task<Void, Never>?
     private var recorderStopTask: Task<CapturedAudio, Error>?
     private var deliveryTail: Task<Void, Never>?
-    private var deliveryWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
     private var insertionRebases = ConfirmedInsertionRebases<InsertionTarget>()
-    @Published private var pendingDictations: [UUID: PendingDictation] = [:]
-    private var pendingDictationOrder: [UUID] = []
+    /// Released takes in recording order. The newest may own the HUD via sessionID.
+    @Published private var pendingDictations: [PendingDictation] = []
     private var uploadTask: Task<FinishGenerationRequest, Error>?
     private var uploadPipe: AudioChunkPipe?
     private var refreshTask: Task<Void, Never>?
@@ -172,6 +171,7 @@ final class V07Controller: ObservableObject {
     private var activeClient: ServerClient?
     @MainActor
     private final class PendingDictation {
+        let session: UUID
         let id: UUID
         let client: ServerClient
         let upload: Task<FinishGenerationRequest, Error>
@@ -179,11 +179,10 @@ final class V07Controller: ObservableObject {
         let destination: InsertionDestinationCapture?
         var task: Task<Void, Never>?
         var sealed = false
-        var continuationDestination: DictationDestination?
 
-        init(id: UUID, client: ServerClient, upload: Task<FinishGenerationRequest, Error>,
+        init(session: UUID, id: UUID, client: ServerClient, upload: Task<FinishGenerationRequest, Error>,
              pipe: AudioChunkPipe, destination: InsertionDestinationCapture?) {
-            self.id = id; self.client = client; self.upload = upload
+            self.session = session; self.id = id; self.client = client; self.upload = upload
             self.pipe = pipe; self.destination = destination
         }
 
@@ -691,21 +690,32 @@ final class V07Controller: ObservableObject {
             let connection = activeClient
             resetSession()
             if let generation, let connection { Task { try? await connection.cancel(generation) } }
-        } else if let cancelled = pendingDictations[sessionID] != nil ? sessionID : pendingDictationOrder.last,
-                  let pending = pendingDictations.removeValue(forKey: cancelled) {
-            pendingDictationOrder.removeAll { $0 == cancelled }
+        } else if activity.isBusy, let index = pendingDictations.lastIndex(where: { $0.session == sessionID }) {
+            let pending = pendingDictations.remove(at: index)
             pending.cancel()
             Task { try? await pending.client.cancel(pending.id) }
+        } else if let earlier = pendingDictations.last {
+            // The HUD shows a settled result or error. Dismissing it must not
+            // cancel older work that the HUD does not show.
+            errorMessage = nil
+            showEarlierDictation(earlier)
+            return
         }
-        let remaining = pendingDictationOrder.last
+        let remaining = pendingDictations.last?.session
         sessionID = remaining ?? UUID()
         activity = remaining == nil ? .idle : .transcribing
-        insertionRebases.endBatchIfIdle(isCapturing: isCapturing, hasPendingDictations: !pendingDictations.isEmpty)
-        resumeDeliveryWaiters()
         statusMessage = remaining == nil ? "Cancelled" : "Cancelled · Earlier dictation is still processing"
         errorMessage = nil
         onHUDVisibility?(remaining != nil)
         refreshServer()
+    }
+
+    private func showEarlierDictation(_ pending: PendingDictation) {
+        hudTask?.cancel()
+        sessionID = pending.session
+        activity = .transcribing
+        statusMessage = "Earlier dictation is still processing"
+        onHUDVisibility?(true)
     }
 
     private func resetSession() {
@@ -730,8 +740,6 @@ final class V07Controller: ObservableObject {
         let connection = activeClient
         resetSession()
         showError(message)
-        insertionRebases.endBatchIfIdle(isCapturing: isCapturing, hasPendingDictations: !pendingDictations.isEmpty)
-        resumeDeliveryWaiters()
         if cancelServer, let generation, let connection { Task { try? await connection.cancel(generation) } }
         refreshHistory()
     }
@@ -803,7 +811,6 @@ final class V07Controller: ObservableObject {
             guard let self else { return }
             if isCheckingShortcut { appendShortcutCheck("Hold released."); return }
             if !isTestSession { finishDictation() }
-            resumeDeliveryWaiters()
         }
         hotkey.onCancel = { [weak self] in
             guard let self else { return }
@@ -822,7 +829,8 @@ final class V07Controller: ObservableObject {
             showError("No microphone is available. Connect an input and try again."); onShowWindow?(); return
         }
         hudTask?.cancel(); errorMessage = nil
-        insertionRebases.endBatchIfIdle(isCapturing: isCapturing, hasPendingDictations: !pendingDictations.isEmpty)
+        // Confirmed cursor moves matter only to takes that overlap them.
+        if pendingDictations.isEmpty { insertionRebases.removeAll() }
         sessionID = UUID()
         let current = sessionID
         isTestSession = isTest
@@ -917,11 +925,9 @@ final class V07Controller: ObservableObject {
         let test = isTestSession
         let capturedDestination = insertionDestination
         let clipboardCount = recordingClipboardChangeCount
-        let pending = PendingDictation(id: id, client: connection, upload: uploadTask,
+        let pending = PendingDictation(session: current, id: id, client: connection, upload: uploadTask,
                                        pipe: uploadPipe, destination: destinationTask)
-        pending.continuationDestination = test ? .test : capturedDestination?.target.map(DictationDestination.field)
-        pendingDictations[current] = pending
-        pendingDictationOrder.append(current)
+        pendingDictations.append(pending)
         activeGenerationID = nil; activeClient = nil; self.uploadTask = nil; self.uploadPipe = nil
         destinationTask = nil; insertionDestination = nil; recordingListHint = nil; recordingInputName = nil
         recorder.onChunk = nil
@@ -933,9 +939,7 @@ final class V07Controller: ObservableObject {
             var capturedAudio: CapturedAudio?
             defer {
                 capturedAudio?.cleanup()
-                pendingDictations.removeValue(forKey: current)
-                pendingDictationOrder.removeAll { $0 == current }
-                insertionRebases.endBatchIfIdle(isCapturing: isCapturing, hasPendingDictations: !pendingDictations.isEmpty)
+                pendingDictations.removeAll { $0 === pending }
                 if pendingDictations.isEmpty {
                     deliveryTail = nil
                     applyConfiguration(configuration.configuration)
@@ -959,15 +963,10 @@ final class V07Controller: ObservableObject {
                     resolved = .clipboard
                 } else { resolved = destination }
                 let anchor: DictationDestination? = test ? .test : resolved.target.flatMap { $0.selection == nil ? nil : .field($0) }
-                pending.continuationDestination = anchor
-                // Concurrent takes must not both extend the last delivered list
-                // snapshot. Continue only when this destination has settled;
-                // unresolved earlier destinations conservatively suppress it.
-                let hasEarlierDestination = pendingDictationOrder.prefix { $0 != current }.contains { earlier in
-                    guard let previous = pendingDictations[earlier] else { return false }
-                    return previous.continuationDestination == nil || previous.continuationDestination == anchor
-                }
-                finish.continuationID = hasEarlierDestination ? nil : anchor.flatMap { self.continuation(for: $0)?.generationID }
+                // Queued takes must not both extend the last delivered list
+                // snapshot, so only the oldest undelivered take may continue it.
+                finish.continuationID = pendingDictations.first === pending
+                    ? anchor.flatMap { self.continuation(for: $0)?.generationID } : nil
                 try Task.checkCancellation()
                 pending.sealed = true // The server may accept a seal whose response is interrupted.
                 var result = try await connection.finish(id, value: finish)
@@ -993,9 +992,14 @@ final class V07Controller: ObservableObject {
                 do { try await connection.delivery(id, receipt: receipt) }
                 catch { continuationAnchors.removeAll { $0.generationID == id } }
                 try Task.checkCancellation()
+                // Other takes can change the shared last-delivery state during the receipt request.
+                let delivered = DictationDeliveryStatus(rawValue: receipt.status) ?? .failed
                 if sessionID == current {
-                    activity = receipt.status == DictationDeliveryStatus.failed.rawValue ? .failed : .success
-                    dismissHUDAfter(seconds: lastDeliveryStatus == .failed || lastDeliveryStatus == .unconfirmed ? 4 : 1.7)
+                    activity = delivered == .failed ? .failed : .success
+                    dismissHUDAfter(seconds: delivered.needsAttention ? 4 : 1.7)
+                } else if delivered.needsAttention {
+                    // A newer take owns the HUD and will replace this result.
+                    errorMessage = "Earlier dictation: \(receipt.message ?? delivered.hudLabel)"
                 }
                 refreshServer()
             } catch {
@@ -1024,7 +1028,6 @@ final class V07Controller: ObservableObject {
             await precedingDelivery?.value
             await task.value
         }
-        resumeDeliveryWaiters()
     }
 
     private func applyProgress(_ generation: GenerationRecord, session: UUID) {
@@ -1068,7 +1071,7 @@ final class V07Controller: ObservableObject {
             let outcome = await inserter.deliver(record.insertionText, copying: record.finalText,
                                                   to: destination, clipboardUnchangedSince: clipboardCount,
                                                   waitUntilReady: { await self.waitForCaptureRelease() },
-                                                  isCaptureActive: { self.isCapturing || self.hotkey.isHoldingFn })
+                                                  isCaptureActive: { self.isHoldingCapture })
             guard !Task.isCancelled else { return DeliveryReceipt(status: "failed", message: "Delivery cancelled") }
             if let anchor { continuationAnchors.removeAll { $0.destination == anchor } }
             switch outcome {
@@ -1104,34 +1107,19 @@ final class V07Controller: ObservableObject {
         return .field(insertionRebases.destination(for: target) { TextInserter.unchangedAnchor($0) != nil })
     }
 
-    private func waitForCaptureRelease() async {
-        while !Task.isCancelled && (isCapturing || hotkey.isHoldingFn) {
-            let waiter = UUID()
-            await withTaskCancellationHandler {
-                await withCheckedContinuation { continuation in
-                    if Task.isCancelled { continuation.resume() }
-                    else { deliveryWaiters[waiter] = continuation }
-                }
-            } onCancel: {
-                Task { @MainActor [weak self] in self?.deliveryWaiters.removeValue(forKey: waiter)?.resume() }
-            }
-        }
-    }
+    /// Delivery never overlaps a hold, including a press still inside its acceptance delay.
+    private var isHoldingCapture: Bool { isCapturing || hotkey.isHoldInProgress }
 
-    private func resumeDeliveryWaiters() {
-        guard !isCapturing, !hotkey.isHoldingFn else { return }
-        let waiters = deliveryWaiters.values
-        deliveryWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
+    private func waitForCaptureRelease() async {
+        while isHoldingCapture, (try? await Task.sleep(for: .milliseconds(50))) != nil {}
     }
 
     private func stopPendingDictations() {
-        for pending in pendingDictations.values {
+        for pending in pendingDictations {
             pending.cancel()
             if !pending.sealed { Task { try? await pending.client.cancel(pending.id) } }
         }
         pendingDictations.removeAll()
-        pendingDictationOrder.removeAll()
         deliveryTail = nil
         insertionRebases.removeAll()
     }
@@ -1167,7 +1155,9 @@ final class V07Controller: ObservableObject {
         hudTask?.cancel()
         hudTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
-            guard let self, !isBusy else { return }
+            guard let self, !activity.isBusy else { return }
+            // A newer take's result was shown; return the HUD to earlier work.
+            if let earlier = pendingDictations.last { showEarlierDictation(earlier); return }
             onHUDVisibility?(false)
             recordingFeedback.reset()
             if activity == .success { activity = .idle; statusMessage = isServerReady ? "Ready when you are" : serverStatusMessage }

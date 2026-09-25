@@ -588,6 +588,25 @@ test("verified available models accept recordings while their helper reloads", a
   expect((await completed(service, record.id)).status).toBe("completed");
 });
 
+test("a speech model that fails to load stops admitting recordings until it loads", async () => {
+  const inference = new QueuedInference();
+  inference.cold = true;
+  const failed = deferred();
+  inference.warmUp = () => {
+    failed.release();
+    return Promise.reject(new Error("Metal device unavailable."));
+  };
+  const { service } = await setup(inference);
+  await failed.promise;
+  await Bun.sleep(0);
+  const health = await service.health();
+  expect(health.ready).toBe(false);
+  expect(health.message).toBe("Speech model failed to load.");
+  await expect(service.create(request())).rejects.toMatchObject({ code: "server_unavailable" });
+  inference.cold = false;
+  expect((await service.health()).ready).toBe(true);
+});
+
 test("shutdown cancels every receiving and queued recording without starting another inference", async () => {
   const inference = new QueuedInference();
   const { service } = await setup(inference);

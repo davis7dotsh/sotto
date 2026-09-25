@@ -235,51 +235,15 @@ extension ServerClient {
     }
     func finish(_ id: UUID, value: FinishGenerationRequest) async throws -> GenerationRecord {
         let body = try Self.encode(value)
-        do { return try await json(path: "v1/generations/\(id)/finish", method: "POST", body: body) }
-        catch {
-            try Task.checkCancellation()
-            guard Self.isTransient(error) else { throw error }
-            // Sealing is idempotent for these exact frame counts. Recover a lost
-            // acknowledgement without abandoning the take's eventual delivery.
-            try await Task.sleep(for: .milliseconds(250))
+        var failures = 0
+        while true {
             do { return try await json(path: "v1/generations/\(id)/finish", method: "POST", body: body) }
             catch {
                 try Task.checkCancellation()
-                guard Self.isTransient(error) else { throw error }
-                return try await reconcileFinish(id, value: value)
-            }
-        }
-    }
-
-    private func reconcileFinish(_ id: UUID, value: FinishGenerationRequest) async throws -> GenerationRecord {
-        var failures = 0
-        while true {
-            try Task.checkCancellation()
-            do {
-                var record = try await generation(id)
-                try Task.checkCancellation()
-                guard record.id == id else { throw ServerClientError.invalidResponse }
-                // A GET can overtake a delayed finish request. Replay the same
-                // seal within this retry budget instead of cancelling its audio.
-                if record.status == .receiving {
-                    record = try await json(path: "v1/generations/\(id)/finish", method: "POST", body: Self.encode(value))
-                    try Task.checkCancellation()
-                    guard record.id == id else { throw ServerClientError.invalidResponse }
-                }
-                // A failed seal can have no audio artifacts. Preserve its
-                // terminal reason; the controller never delivers these states.
-                if record.status == .failed || record.status == .cancelled { return record }
-                guard record.status != .receiving,
-                      record.inferenceAudio?.frameCount == value.inferenceFrames,
-                      record.originalAudio?.frameCount == value.originalFrames else {
-                    throw ServerClientError.invalidResponse
-                }
-                return record
-            } catch {
-                try Task.checkCancellation()
-                guard Self.isTransient(error) else { throw error }
+                // Sealing is idempotent for these exact frame counts: a replay
+                // recovers a lost acknowledgement or a delayed first request.
+                guard Self.isTransient(error), failures < 3 else { throw error }
                 failures += 1
-                guard failures < 3 else { throw error }
                 try await Task.sleep(for: .milliseconds(250 * failures))
             }
         }

@@ -635,12 +635,35 @@ enum DictationClipboard {
         let item = NSPasteboardItem()
         guard item.setString(text, forType: .string) else { return .failure(.unavailable) }
         guard !Task.isCancelled else { return .failure(.cancelled) }
-        guard expectedCount == nil || pasteboard.changeCount == expectedCount else { return .failure(.changed) }
-        let ownedCount = pasteboard.prepareForNewContents(with: .currentHostOnly)
+        guard expectedCount.map({ OwnedPasteboardRevisions.onlyOwnedChanges(on: pasteboard, since: $0) }) ?? true else {
+            return .failure(.changed)
+        }
+        let ownedCount = OwnedPasteboardRevisions.prepare(pasteboard)
         guard pasteboard.changeCount == ownedCount else { return .failure(.changed) }
         guard pasteboard.writeObjects([item]) else { return .failure(.unavailable) }
         guard pasteboard.changeCount == ownedCount else { return .failure(.changed) }
         return .success(())
+    }
+}
+
+/// Revisions this app wrote. Queued takes compare the clipboard with the one
+/// at their hold; an earlier take's paste lease or copy is not newer user data.
+@MainActor
+enum OwnedPasteboardRevisions {
+    private static var revisions: [NSPasteboard.Name: Set<Int>] = [:]
+
+    static func prepare(_ pasteboard: NSPasteboard) -> Int {
+        let count = pasteboard.prepareForNewContents(with: .currentHostOnly)
+        revisions[pasteboard.name, default: []].insert(count)
+        return count
+    }
+
+    /// Whether every change after `baseline`, through `count`, was this app's own write.
+    static func onlyOwnedChanges(on pasteboard: NSPasteboard, since baseline: Int, through count: Int? = nil) -> Bool {
+        let count = count ?? pasteboard.changeCount
+        guard count > baseline else { return count == baseline }
+        let owned = revisions[pasteboard.name] ?? []
+        return (baseline + 1 ... count).allSatisfy(owned.contains)
     }
 }
 
@@ -688,7 +711,7 @@ struct ClipboardSnapshot {
             return item
         }
         guard pasteboard.changeCount == expectedCount else { return }
-        let restoredCount = pasteboard.prepareForNewContents(with: .currentHostOnly)
+        let restoredCount = OwnedPasteboardRevisions.prepare(pasteboard)
         guard pasteboard.changeCount == restoredCount else { return }
         if !restored.isEmpty { pasteboard.writeObjects(restored) }
     }

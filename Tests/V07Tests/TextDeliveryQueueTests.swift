@@ -51,6 +51,23 @@ final class TextDeliveryQueueTests: XCTestCase {
         XCTAssertEqual(fixture.waitsDuringCapture, 0)
         XCTAssertEqual(fixture.pasteWrites, 1)
     }
+
+    @MainActor
+    func testEarlierTakeClipboardWritesDoNotBlockQueuedTakeButUserCopyDoes() {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.setString("Original clipboard", forType: .string)
+        let heldAt = pasteboard.changeCount
+        XCTAssertNoThrow(try DictationClipboard.copy("First take", to: pasteboard, onlyIfUnchangedSince: heldAt).get())
+        XCTAssertNoThrow(try DictationClipboard.copy("Second take", to: pasteboard, onlyIfUnchangedSince: heldAt).get(),
+                         "A queued take captured its baseline before the earlier take's own write")
+        pasteboard.clearContents()
+        pasteboard.setString("User copy", forType: .string)
+        guard case .failure(.changed) = DictationClipboard.copy("Third take", to: pasteboard, onlyIfUnchangedSince: heldAt) else {
+            return XCTFail("A user's newer copy must win")
+        }
+        XCTAssertEqual(pasteboard.string(forType: .string), "User copy")
+    }
 }
 
 /// Uses an isolated pasteboard and injected events; no hardware or AX access.
