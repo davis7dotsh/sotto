@@ -179,9 +179,8 @@ final class V07Controller: ObservableObject {
         let destination: InsertionDestinationCapture?
         var task: Task<Void, Never>?
         var sealed = false
-        /// Set once the destination resolves; nil means this take cannot continue a list.
-        var anchor: DictationDestination?
-        var resolved = false
+        /// Nil until the destination resolves; list continuation keys off its anchor.
+        var target: (destination: InsertionDestination, anchor: DictationDestination?)?
 
         init(session: UUID, id: UUID, client: ServerClient, upload: Task<FinishGenerationRequest, Error>,
              pipe: AudioChunkPipe, destination: InsertionDestinationCapture?) {
@@ -930,6 +929,9 @@ final class V07Controller: ObservableObject {
         let clipboardCount = recordingClipboardChangeCount
         let pending = PendingDictation(session: current, id: id, client: connection, upload: uploadTask,
                                        pipe: uploadPipe, destination: destinationTask)
+        // Usually known at release, so a later take can continue a list in another field.
+        let knownDestination: InsertionDestination? = test ? .clipboard : capturedDestination
+        pending.target = knownDestination.map { Self.resolve($0, isTest: test, releasedAt: releasedAt) }
         pendingDictations.append(pending)
         activeGenerationID = nil; activeClient = nil; self.uploadTask = nil; self.uploadPipe = nil
         destinationTask = nil; insertionDestination = nil; recordingListHint = nil; recordingInputName = nil
@@ -957,24 +959,26 @@ final class V07Controller: ObservableObject {
                 try Task.checkCancellation()
                 audio.cleanup()
                 capturedAudio = nil
-                let destination: InsertionDestination
-                if test { destination = .clipboard }
-                else if let capturedDestination { destination = capturedDestination }
-                else { destination = await pending.destination?.value ?? .clipboard }
-                let resolved: InsertionDestination
-                if let target = destination.target, !InsertionCapturePolicy.permitsInsertion(capturedAt: target.capturedAt, releasedAt: releasedAt) {
-                    resolved = .clipboard
-                } else { resolved = destination }
-                let anchor: DictationDestination? = test ? .test : resolved.target.flatMap { $0.selection == nil ? nil : .field($0) }
-                pending.anchor = anchor; pending.resolved = true
+                let target: (destination: InsertionDestination, anchor: DictationDestination?)
+                if let known = pending.target { target = known }
+                else {
+                    target = Self.resolve(await pending.destination?.value ?? .clipboard, isTest: test, releasedAt: releasedAt)
+                    pending.target = target
+                }
+                let resolved = target.destination, anchor = target.anchor
                 // Queued takes must not both extend the last delivered list snapshot.
                 // An earlier take that is unresolved or shares this anchor suppresses it.
                 let sharesEarlierAnchor = pendingDictations.prefix { $0 !== pending }
-                    .contains { !$0.resolved || $0.anchor == anchor }
+                    .contains { earlier in earlier.target.map { $0.anchor == anchor } ?? true }
                 finish.continuationID = sharesEarlierAnchor ? nil : anchor.flatMap { self.continuation(for: $0)?.generationID }
                 try Task.checkCancellation()
                 pending.sealed = true // The server may accept a seal whose response is interrupted.
-                var result = try await connection.finish(id, value: finish)
+                var result: GenerationRecord
+                do { result = try await connection.finish(id, value: finish) }
+                catch let ServerClientError.rejected(status, message) where (400..<500).contains(status) && ![408, 429].contains(status) {
+                    pending.sealed = false // The server answered without sealing, so cancel promptly.
+                    throw ServerClientError.rejected(status, message)
+                }
                 try Task.checkCancellation()
                 if !result.status.isTerminal {
                     result = try await connection.events(id) { [weak self] record in
@@ -1033,6 +1037,15 @@ final class V07Controller: ObservableObject {
             await precedingDelivery?.value
             await task.value
         }
+    }
+
+    private static func resolve(_ destination: InsertionDestination, isTest: Bool,
+                                releasedAt: TimeInterval) -> (destination: InsertionDestination, anchor: DictationDestination?) {
+        var resolved = destination
+        if let target = destination.target, !InsertionCapturePolicy.permitsInsertion(capturedAt: target.capturedAt, releasedAt: releasedAt) {
+            resolved = .clipboard
+        }
+        return (resolved, isTest ? .test : resolved.target.flatMap { $0.selection == nil ? nil : .field($0) })
     }
 
     private func applyProgress(_ generation: GenerationRecord, session: UUID) {
