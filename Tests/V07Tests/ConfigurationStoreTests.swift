@@ -44,9 +44,11 @@ final class ConfigurationStoreTests: XCTestCase {
             store.update {
                 $0.launchAtLogin = true
                 $0.holdKey = "fn"
+                $0.activationMode = "doubleTap"
             }
             XCTAssertEqual(store.configuration.microphones.profiles[0].name, "Profile 40")
             XCTAssertEqual(store.configuration.holdKey, "fn")
+            XCTAssertEqual(store.configuration.activationMode, "doubleTap")
             XCTAssertGreaterThan(store.pendingWriteCount, 0)
 
             await store.flush()
@@ -57,6 +59,28 @@ final class ConfigurationStoreTests: XCTestCase {
             XCTAssertEqual(disk, store.configuration)
             XCTAssertTrue(store.configuration.launchAtLogin)
         }
+    }
+
+    func testActivationModeDefaultsToHoldForOlderConfigFilesAndRejectsUnknownValues() async throws {
+        XCTAssertEqual(HotkeyActivationMode.doubleTapToggle.rawValue, "doubleTap",
+                       "The persisted token must match the configuration decoder allow-list")
+        try await withStore { store, file in
+            let legacy = V07Configuration(holdKey: "fn")
+            let json = try JSONEncoder().encode(legacy)
+            var withoutMode = try JSONSerialization.jsonObject(with: json) as! [String: Any]
+            withoutMode.removeValue(forKey: "activationMode")
+            _ = try await file.load(orCreate: try JSONDecoder().decode(V07Configuration.self,
+                from: JSONSerialization.data(withJSONObject: withoutMode))).get()
+            await store.start()
+            XCTAssertEqual(store.configuration.activationMode, "hold", "Files without the key keep holding to talk")
+
+            store.update { $0.activationMode = "doubleTap" }
+            await store.flush()
+            let saved = try await file.read().get()
+            XCTAssertEqual(saved.activationMode, "doubleTap")
+        }
+        let invalid = Data(#"{"schemaVersion": 1, "activationMode": "tripleTap"}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(V07Configuration.self, from: invalid))
     }
 
     func testQueuedAppEditsMergeUnrelatedExternalFieldsAndStartupEdits() async throws {

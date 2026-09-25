@@ -5,23 +5,25 @@ import Foundation
 public struct V07Configuration: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public var holdKey: String
+    public var activationMode: String
     public var launchAtLogin: Bool
     public var muteOutputWhileRecording: Bool
     public var microphones: MicrophonePreferences
 
     public static let `default` = V07Configuration()
 
-    public init(holdKey: String = "rightOption", launchAtLogin: Bool = false, muteOutputWhileRecording: Bool = false,
-                microphones: MicrophonePreferences = MicrophonePreferences()) {
+    public init(holdKey: String = "rightOption", activationMode: String = "hold", launchAtLogin: Bool = false,
+                muteOutputWhileRecording: Bool = false, microphones: MicrophonePreferences = MicrophonePreferences()) {
         schemaVersion = 1
         self.holdKey = holdKey
+        self.activationMode = activationMode
         self.launchAtLogin = launchAtLogin
         self.muteOutputWhileRecording = muteOutputWhileRecording
         self.microphones = microphones
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, holdKey, launchAtLogin, muteOutputWhileRecording, microphones
+        case schemaVersion, holdKey, activationMode, launchAtLogin, muteOutputWhileRecording, microphones
     }
 
     public init(from decoder: Decoder) throws {
@@ -34,7 +36,12 @@ public struct V07Configuration: Codable, Equatable, Sendable {
         guard ["rightOption", "rightControl", "fn"].contains(holdKey) else {
             throw values.invalid(.holdKey, "Use rightOption, rightControl, or fn.")
         }
+        let activationMode = try values.value(String.self, for: .activationMode, default: "hold")
+        guard ["hold", "doubleTap"].contains(activationMode) else {
+            throw values.invalid(.activationMode, "Use hold or doubleTap.")
+        }
         self.init(holdKey: holdKey,
+                  activationMode: activationMode,
                   launchAtLogin: try values.value(Bool.self, for: .launchAtLogin, default: false),
                   muteOutputWhileRecording: try values.value(Bool.self, for: .muteOutputWhileRecording, default: false),
                   microphones: values.contains(.microphones)

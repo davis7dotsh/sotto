@@ -33,7 +33,8 @@ enum V07Brand {
 
     /// Status-bar templates must let AppKit choose their foreground. In
     /// particular, do not bridge the SwiftUI brand tint onto NSStatusBarButton.
-    static func updateStatusButton(_ button: NSButton, activity: DictationActivity, shortcut: HoldKey) {
+    static func updateStatusButton(_ button: NSButton, activity: DictationActivity, shortcut: HoldKey,
+                                   activationMode: HotkeyActivationMode = .hold) {
         button.contentTintColor = nil
         button.imagePosition = .imageLeading
         button.title = V07Build.current.isDevelopment ? " Dev" : ""
@@ -47,7 +48,9 @@ enum V07Brand {
         case .transcribing: description = "\(V07Build.current.displayName) — transcribing"
         case .delivering: description = "\(V07Build.current.displayName) — delivering your words"
         case .failed: description = "\(V07Build.current.displayName) — dictation needs attention"
-        case .idle, .success: description = "\(V07Build.current.displayName) — hold \(shortcut.title) to dictate"
+        case .idle, .success:
+            let verb = activationMode == .doubleTapToggle ? "double tap" : "hold"
+            description = "\(V07Build.current.displayName) — \(verb) \(shortcut.title) to dictate"
         }
         button.toolTip = description
         button.setAccessibilityLabel(description)

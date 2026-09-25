@@ -141,7 +141,7 @@ struct DictationPage: View {
             VStack(alignment: .leading, spacing: 26) {
                 HStack(spacing: 20) {
                     V07HoldKeyCap(key: controller.shortcut, isPressed: controller.isRecording)
-                    Text("Hold to dictate.")
+                    Text(controller.activationMode == .doubleTapToggle ? "Double tap to dictate." : "Hold to dictate.")
                         .font(.system(size: 28, weight: .medium))
                         .tracking(-0.7)
                     Spacer()
@@ -160,7 +160,7 @@ struct DictationPage: View {
                     VStack(spacing: 10) {
                         PermissionRow(title: "Microphone", detail: "Capture your voice while dictating.",
                                       granted: controller.permissions.microphone, action: controller.requestMicrophone)
-                        PermissionRow(title: "Accessibility", detail: "Use the hold key and insert text.",
+                        PermissionRow(title: "Accessibility", detail: "Use the dictation key and insert text.",
                                       granted: controller.permissions.accessibility, action: controller.requestAccessibility)
                         HStack { PermissionHelpButton(); Spacer() }
                     }

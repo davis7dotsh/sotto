@@ -50,7 +50,7 @@ private struct PermissionHelpView: View {
             .background(V07Palette.surface)
             .clipShape(RoundedRectangle(cornerRadius: 10))
 
-            Text("Accessibility also enables the hold key. You do not need a separate Input Monitoring grant.")
+            Text("Accessibility also enables the dictation key. You do not need a separate Input Monitoring grant.")
                 .font(.system(size: 12))
                 .foregroundStyle(V07Palette.muted)
 

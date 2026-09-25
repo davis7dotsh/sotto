@@ -7,6 +7,12 @@ struct V07MenuView: View {
     var openWindow: () -> Void
     var quit: () -> Void
 
+    private var idleDictationHint: String {
+        let key = controller.shortcut == .fn ? "fn" : controller.shortcut.title
+        let verb = controller.activationMode == .doubleTapToggle ? "Double tap" : "Press"
+        return "\(verb) \(key) to dictate"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
@@ -28,7 +34,7 @@ struct V07MenuView: View {
             .frame(height: 28)
 
             V07MicrophoneTestButton(controller: controller, identifier: "menu.test",
-                idleTitle: "Press \(controller.shortcut == .fn ? "fn" : controller.shortcut.title) to dictate")
+                idleTitle: idleDictationHint)
             Button { controller.copyLastTranscript() } label: {
                 Label("Copy last message", systemImage: "doc.on.doc")
                     .frame(maxWidth: .infinity, alignment: .leading)
