@@ -31,8 +31,9 @@ final class SystemOutputMuter {
     }
 
     func restore() {
-        for (device, element) in muted { _ = client.setMuted(device, element, false) }
-        muted = []
+        // An unmute that fails (e.g. the output dropped mid-take) stays pending
+        // so the next restore retries it instead of leaving the Mac muted.
+        muted = muted.filter { device, element in !client.setMuted(device, element, false) }
     }
 }
 

@@ -78,6 +78,20 @@ final class SystemOutputMuterTests: XCTestCase {
         XCTAssertEqual(output.setCalls, 1)
         XCTAssertEqual(output.devices[7], [kAudioObjectPropertyElementMain: false])
     }
+
+    func testRejectedRestoreIsRetriedOnTheNextRestore() {
+        let output = FakeOutput(devices: [7: [kAudioObjectPropertyElementMain: false]], defaultDevice: 7)
+        let muter = SystemOutputMuter(client: output.client)
+
+        muter.mute()
+        output.rejectsChanges = true
+        muter.restore()
+        XCTAssertEqual(output.devices[7], [kAudioObjectPropertyElementMain: true])
+
+        output.rejectsChanges = false
+        muter.restore()
+        XCTAssertEqual(output.devices[7], [kAudioObjectPropertyElementMain: false])
+    }
 }
 
 /// In-memory HAL: each device maps its settable mute elements to their state.
